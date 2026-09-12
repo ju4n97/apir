@@ -3,6 +3,20 @@ server {
   port = 8080
 }
 
+endpoint "GET /openapi.json" {
+  openapi "spec" {
+    format = "json"
+  }
+}
+
+endpoint "GET /docs" {
+  description = "Interactive API reference."
+
+  openapi "ui" {
+    renderer = "elements"
+  }
+}
+
 schema "user_create" {
   field "email" {
     type        = string
