@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -43,6 +44,9 @@ func NewContext(r *http.Request, routePattern string, maxBytes int64) (*Context,
 		if int64(len(raw)) > maxBytes {
 			return nil, fmt.Errorf("request body exceeds limit of %d bytes", maxBytes)
 		}
+
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw, &bodyData); err != nil {
 				malformed = true
