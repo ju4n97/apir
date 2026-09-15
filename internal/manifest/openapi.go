@@ -67,6 +67,9 @@ func GenerateOpenAPI(cfg *config.Config, format string) ([]byte, error) {
 
 	for name, s := range cfg.Schemas {
 		schemaObj := openapi3.NewObjectSchema()
+		if s.Description != "" {
+			schemaObj.Description = s.Description
+		}
 		for fName, field := range s.Fields {
 			schemaObj.Properties[fName] = fieldToSchemaRef(field)
 			if field.Required {
@@ -315,8 +318,41 @@ func fieldToSchema(f config.Field) *openapi3.Schema {
 	return s
 }
 
-// fieldToSchemaRef wraps a Field schema inside an OpenAPI SchemaRef.
+// fieldToSchemaRef wraps a Field schema inside an OpenAPI SchemaRef, resolving schema $refs and array items.
 func fieldToSchemaRef(f config.Field) *openapi3.SchemaRef {
+	// Direct custom schema reference (e.g. type = "User")
+	if f.SchemaRef != "" && f.Type == config.DataTypeObject {
+		return &openapi3.SchemaRef{
+			Ref: "#/components/schemas/" + f.SchemaRef,
+		}
+	}
+
+	// Array of custom schemas or array of primitives (e.g. type = "[]User")
+	if f.Type == config.DataTypeArray {
+		s := openapi3.NewArraySchema()
+		if f.Description != "" {
+			s.Description = f.Description
+		}
+
+		if f.SchemaRef != "" {
+			s.Items = &openapi3.SchemaRef{
+				Ref: "#/components/schemas/" + f.SchemaRef,
+			}
+		} else if f.ItemsType != "" {
+			s.Items = &openapi3.SchemaRef{
+				Value: &openapi3.Schema{
+					Type: &openapi3.Types{string(f.ItemsType)},
+				},
+			}
+		} else {
+			s.Items = &openapi3.SchemaRef{
+				Value: openapi3.NewSchema(),
+			}
+		}
+		return &openapi3.SchemaRef{Value: s}
+	}
+
+	// Flat primitive scalar
 	return &openapi3.SchemaRef{Value: fieldToSchema(f)}
 }
 

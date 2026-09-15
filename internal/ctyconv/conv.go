@@ -187,5 +187,32 @@ func BuiltinFunctions() map[string]function.Function {
 				return cty.StringVal(strings.ToLower(args[0].AsString())), nil
 			},
 		}),
+		"trim": function.New(&function.Spec{
+			Params: []function.Parameter{{Name: "str", Type: cty.String}},
+			Type:   function.StaticReturnType(cty.String),
+			Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+				return cty.StringVal(strings.TrimSpace(args[0].AsString())), nil
+			},
+		}),
+		"trimprefix": function.New(&function.Spec{
+			Params: []function.Parameter{
+				{Name: "str", Type: cty.String},
+				{Name: "prefix", Type: cty.String},
+			},
+			Type: function.StaticReturnType(cty.String),
+			Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+				return cty.StringVal(strings.TrimPrefix(args[0].AsString(), args[1].AsString())), nil
+			},
+		}),
+		"trimsuffix": function.New(&function.Spec{
+			Params: []function.Parameter{
+				{Name: "str", Type: cty.String},
+				{Name: "suffix", Type: cty.String},
+			},
+			Type: function.StaticReturnType(cty.String),
+			Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+				return cty.StringVal(strings.TrimSuffix(args[0].AsString(), args[1].AsString())), nil
+			},
+		}),
 	}
 }

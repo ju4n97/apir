@@ -246,6 +246,12 @@ func decodeSchema(name string, body hcl.Body, ctx *hcl.EvalContext) (config.Sche
 		return schema, diags
 	}
 
+	attrs, _ := body.JustAttributes()
+	if attr, ok := attrs["description"]; ok {
+		val, _ := attr.Expr.Value(ctx)
+		schema.Description = val.AsString()
+	}
+
 	for _, block := range content.Blocks {
 		if block.Type == "field" {
 			f, err := decodeField(block.Labels[0], block.Body, ctx)
@@ -534,10 +540,30 @@ func decodeHeaders(expr hcl.Expression, ctx *hcl.EvalContext) map[string]string 
 // decodeRequestBlock populates ingress validation rules directly into config.RequestRules.
 func decodeRequestBlock(body hcl.Body, ctx *hcl.EvalContext, req *config.RequestRules, schemas map[string]config.Schema) error {
 	attrs, _ := body.JustAttributes()
+
+	// Support schema references across all coordinates
 	if attr, ok := attrs["body"]; ok {
 		req.BodyRef = resolveIdentifier(attr.Expr)
 		if s, ok := schemas[req.BodyRef]; ok {
 			maps.Copy(req.Body, s.Fields)
+		}
+	}
+	if attr, ok := attrs["headers"]; ok {
+		ref := resolveIdentifier(attr.Expr)
+		if s, ok := schemas[ref]; ok {
+			maps.Copy(req.Headers, s.Fields)
+		}
+	}
+	if attr, ok := attrs["query"]; ok {
+		ref := resolveIdentifier(attr.Expr)
+		if s, ok := schemas[ref]; ok {
+			maps.Copy(req.Query, s.Fields)
+		}
+	}
+	if attr, ok := attrs["path"]; ok {
+		ref := resolveIdentifier(attr.Expr)
+		if s, ok := schemas[ref]; ok {
+			maps.Copy(req.Path, s.Fields)
 		}
 	}
 
@@ -590,11 +616,13 @@ func decodeField(name string, body hcl.Body, ctx *hcl.EvalContext) (config.Field
 
 	if attr, ok := attrs["type"]; ok {
 		val, _ := attr.Expr.Value(ctx)
-		dataType, err := config.ParseDataType(val.AsString())
+		dataType, schemaRef, itemsType, err := config.ParseFieldType(val.AsString())
 		if err != nil {
 			return f, fmt.Errorf("field %q: %w", name, err)
 		}
 		f.Type = dataType
+		f.SchemaRef = schemaRef
+		f.ItemsType = itemsType
 	} else {
 		return f, fmt.Errorf("field %q is missing required attribute 'type'", name)
 	}
@@ -703,6 +731,16 @@ func decodeOpenAPIMetadata(body hcl.Body, ctx *hcl.EvalContext, meta *config.Ope
 // and that no duplicate route patterns exist across manifest files.
 func validateIntegrity(cfg *config.Config) error {
 	seenRoutes := make(map[string]struct{}, len(cfg.Endpoints))
+
+	for _, s := range cfg.Schemas {
+		for _, f := range s.Fields {
+			if f.SchemaRef != "" {
+				if _, exists := cfg.Schemas[f.SchemaRef]; !exists {
+					return fmt.Errorf("schema %q field %q references unknown schema %q", s.Name, f.Name, f.SchemaRef)
+				}
+			}
+		}
+	}
 
 	for _, ep := range cfg.Endpoints {
 		if _, exists := seenRoutes[ep.RoutePattern]; exists {
@@ -856,6 +894,9 @@ var routeBodySchema = &hcl.BodySchema{
 }
 
 var schemaBlockSchema = &hcl.BodySchema{
+	Attributes: []hcl.AttributeSchema{
+		{Name: "description"},
+	},
 	Blocks: []hcl.BlockHeaderSchema{
 		{Type: "field", LabelNames: []string{"name"}},
 	},

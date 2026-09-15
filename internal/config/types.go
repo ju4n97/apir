@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -217,6 +218,38 @@ func ParseDataType(raw string) (DataType, error) {
 	default:
 		return "", fmt.Errorf("invalid type %q (allowed: string, integer, number, boolean, array, object)", raw)
 	}
+}
+
+// ParseFieldType parses a field type string into its base DataType, optional SchemaRef, and optional ItemsType.
+func ParseFieldType(raw string) (DataType, string, DataType, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", "", errors.New("field type cannot be empty")
+	}
+
+	// Array notation: []T
+	if after, ok := strings.CutPrefix(raw, "[]"); ok {
+		elem := strings.TrimSpace(after)
+		if elem == "" {
+			return "", "", "", errors.New("array element type cannot be empty")
+		}
+
+		// Array of primitives: []string, []integer, etc.
+		if dt, err := ParseDataType(elem); err == nil {
+			return DataTypeArray, "", dt, nil
+		}
+
+		// Array of custom schemas: []User
+		return DataTypeArray, elem, "", nil
+	}
+
+	// Flat primitive: string, integer, number, boolean, array, object
+	if dt, err := ParseDataType(raw); err == nil {
+		return dt, "", "", nil
+	}
+
+	// Direct custom schema reference: User
+	return DataTypeObject, raw, "", nil
 }
 
 // Format defines standard semantic string formats recognized in OpenAPI 3.1.

@@ -133,3 +133,120 @@ func TestGenerateOpenAPI(t *testing.T) {
 		t.Error("expected standard 'ProblemDetails' schema under components.schemas")
 	}
 }
+
+// TestGenerateOpenAPI_NestedSchemas verifies nested schema $refs, array references, and descriptions.
+func TestGenerateOpenAPI_NestedSchemas(t *testing.T) {
+	t.Parallel()
+
+	m := `
+openapi {
+  title   = "Radiology API"
+  version = "1.0.0"
+}
+
+schema "Patient" {
+  description = "Clinical patient profile"
+  field "id" {
+    type     = "integer"
+    required = true
+  }
+  field "name" {
+    type     = "string"
+    required = true
+  }
+}
+
+schema "Attachment" {
+  description = "Document attachment link"
+  field "id" {
+    type     = "integer"
+    required = true
+  }
+  field "url" {
+    type   = "string"
+    format = "uri"
+  }
+}
+
+schema "Study" {
+  description = "Examination study"
+  field "id" {
+    type     = "integer"
+    required = true
+  }
+  field "patient" {
+    type     = "Patient"
+    required = true
+  }
+  field "attachments" {
+    type = "[]Attachment"
+  }
+  field "tags" {
+    type = "[]string"
+  }
+}
+
+route "POST /studies" {
+  request {
+    body = Study
+  }
+  respond {
+    status = 201
+    schema = Study
+  }
+}
+`
+
+	cfg, err := manifest.Parse(m)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	rawJSON, err := manifest.GenerateOpenAPI(cfg, string(config.SpecFormatJSON))
+	if err != nil {
+		t.Fatalf("GenerateOpenAPI failed: %v", err)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(rawJSON, &doc); err != nil {
+		t.Fatalf("failed to decode OpenAPI JSON: %v", err)
+	}
+
+	components := doc["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+
+	// Verify schema descriptions
+	patientSchema := schemas["Patient"].(map[string]any)
+	if patientSchema["description"] != "Clinical patient profile" {
+		t.Errorf("patient description = %v; want 'Clinical patient profile'", patientSchema["description"])
+	}
+
+	// Verify nested object $ref
+	studySchema := schemas["Study"].(map[string]any)
+	studyProps := studySchema["properties"].(map[string]any)
+
+	patientProp := studyProps["patient"].(map[string]any)
+	if patientProp["$ref"] != "#/components/schemas/Patient" {
+		t.Errorf("patient $ref = %v; want '#/components/schemas/Patient'", patientProp["$ref"])
+	}
+
+	// Verify array of custom schemas $ref
+	attachmentsProp := studyProps["attachments"].(map[string]any)
+	if attachmentsProp["type"] != "array" {
+		t.Errorf("attachments type = %v; want 'array'", attachmentsProp["type"])
+	}
+	attachItems := attachmentsProp["items"].(map[string]any)
+	if attachItems["$ref"] != "#/components/schemas/Attachment" {
+		t.Errorf("attachments items $ref = %v; want '#/components/schemas/Attachment'", attachItems["$ref"])
+	}
+
+	// Verify array of primitives
+	tagsProp := studyProps["tags"].(map[string]any)
+	if tagsProp["type"] != "array" {
+		t.Errorf("tags type = %v; want 'array'", tagsProp["type"])
+	}
+	tagItems := tagsProp["items"].(map[string]any)
+	if tagItems["type"] != "string" {
+		t.Errorf("tags items type = %v; want 'string'", tagItems["type"])
+	}
+}

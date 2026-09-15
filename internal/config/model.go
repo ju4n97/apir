@@ -102,8 +102,10 @@ type Schema struct {
 // Field defines validation rules and OpenAPI schema attributes strictly adhering to OpenAPI 3.1.
 type Field struct {
 	Name        string   `json:"name"`
-	Type        DataType `json:"type"`             // Strict OpenAPI primitive
-	Format      Format   `json:"format,omitempty"` // Strict OpenAPI format
+	Type        DataType `json:"type"`                 // Primary OpenAPI type (string, integer, array, object)
+	SchemaRef   string   `json:"schema_ref,omitempty"` // Target schema name if type is a custom schema or []schema
+	ItemsType   DataType `json:"items_type,omitempty"` // Primitive items type if type is []string, []int, etc.
+	Format      Format   `json:"format,omitempty"`     // Strict OpenAPI format
 	Required    bool     `json:"required,omitempty"`
 	Default     any      `json:"default,omitempty"`
 	Description string   `json:"description,omitempty"`

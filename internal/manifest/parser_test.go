@@ -160,3 +160,31 @@ route "INVALID_LABEL_WITHOUT_PATH" {
 		})
 	}
 }
+
+// TestParser_UnknownNestedSchemaFailure verifies compile-time failure when fields reference unknown schemas.
+func TestParser_UnknownNestedSchemaFailure(t *testing.T) {
+	t.Parallel()
+
+	m := `
+schema "User" {
+  field "profile" {
+    type = "NonExistentProfile"
+  }
+}
+
+route "GET /test" {
+  respond {
+    status = 200
+  }
+}
+`
+	_, err := manifest.Parse(m)
+	if err == nil {
+		t.Fatal("expected compile error for undeclared schema reference, got nil")
+	}
+
+	expectedSub := `references unknown schema "NonExistentProfile"`
+	if !strings.Contains(err.Error(), expectedSub) {
+		t.Errorf("error %q does not contain %q", err.Error(), expectedSub)
+	}
+}
