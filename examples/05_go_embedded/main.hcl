@@ -4,13 +4,13 @@ server {
 }
 
 route "GET /docs" {
-  step "docs" {
+  docs {
     renderer = "elements"
   }
 }
 
 route "GET /openapi.json" {
-  step "spec" {
+  spec {
     format = "json"
   }
 }
@@ -34,7 +34,7 @@ route "GET /api/v1/sky/mars-age/{earth_years}" {
     }
   }
 
-  step "respond" {
+  respond {
     status = 200
     body   = steps.convert.result
   }

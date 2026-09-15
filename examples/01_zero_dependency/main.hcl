@@ -12,13 +12,13 @@ telemetry {
 }
 
 route "GET /openapi.json" {
-  step "spec" {
+  spec {
     format = "json"
   }
 }
 
 route "GET /docs" {
-  step "docs" {
+  docs {
     renderer = "scalar"
   }
 }
@@ -38,7 +38,7 @@ route "GET /api/v1/health" {
     STARLARK
   }
 
-  step "respond" {
+  respond {
     status = 200
     body   = steps.sysinfo.result
   }
@@ -79,7 +79,7 @@ route "POST /api/v1/sanitize" {
     STARLARK
   }
 
-  step "respond" {
+  respond {
     status = 200
     body   = steps.format_tags.result
   }

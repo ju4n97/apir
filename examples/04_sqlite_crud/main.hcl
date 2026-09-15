@@ -11,7 +11,7 @@ openapi {
 
 connection "sql" "main" {
   engine = "sqlite"
-  source = "file:./data/todos.db?mode=rwc"
+  source = "file:todos.db?mode=rwc"
   pool {
     max_open = 1
   }
@@ -56,13 +56,13 @@ schema "TodoUpdate" {
 }
 
 route "GET /docs" {
-  step "docs" {
+  docs {
     renderer = "scalar"
   }
 }
 
 route "GET /openapi.json" {
-  step "spec" {
+  spec {
     format = "json"
   }
 }
@@ -76,7 +76,7 @@ route "GET /api/v1/todos" {
     query      = "SELECT id, title, completed, created_at FROM todos ORDER BY id DESC"
   }
 
-  step "respond" {
+  respond {
     status = 200
     schema = "[]Todo"
     body   = steps.list.rows
@@ -88,16 +88,16 @@ route "POST /api/v1/todos" {
   tag     = "todos"
 
   request {
-    body = schema.TodoCreate
+    body = TodoCreate
   }
 
   step "starlark" "sanitize" {
     source = <<-STARLARK
       def execute(ctx):
-        body = ctx["request"]["body"] or {}
-        return {
-            "title": body.get("title", "").strip()
-        }
+          body = ctx["request"]["body"] or {}
+          return {
+              "title": body.get("title", "").strip()
+          }
     STARLARK
   }
 
@@ -117,9 +117,9 @@ route "POST /api/v1/todos" {
     }
   }
 
-  step "respond" {
+  respond {
     status = 201
-    schema = schema.Todo
+    schema = "Todo"
     body   = steps.insert.row
   }
 }
@@ -143,15 +143,15 @@ route "GET /api/v1/todos/{id}" {
     }
   }
 
-  step "respond" {
+  respond {
     when   = steps.fetch.rows_affected == 0
     status = 404
     body   = problem(404, "Todo item not found")
   }
 
-  step "respond" {
+  respond {
     status = 200
-    schema = schema.Todo
+    schema = "Todo"
     body   = steps.fetch.row
   }
 }
@@ -165,7 +165,7 @@ route "PUT /api/v1/todos/{id}" {
       type     = "integer"
       required = true
     }
-    body = schema.TodoUpdate
+    body = TodoUpdate
   }
 
   step "sql" "update" {
@@ -185,15 +185,15 @@ route "PUT /api/v1/todos/{id}" {
     }
   }
 
-  step "respond" {
+  respond {
     when   = steps.update.rows_affected == 0
     status = 404
     body   = problem(404, "Todo item not found")
   }
 
-  step "respond" {
+  respond {
     status = 200
-    schema = schema.Todo
+    schema = "Todo"
     body   = steps.update.row
   }
 }
@@ -217,13 +217,13 @@ route "DELETE /api/v1/todos/{id}" {
     }
   }
 
-  step "respond" {
+  respond {
     when   = steps.delete.rows_affected == 0
     status = 404
     body   = problem(404, "Todo item not found")
   }
 
-  step "respond" {
+  respond {
     status = 204
   }
 }

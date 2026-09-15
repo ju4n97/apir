@@ -31,64 +31,61 @@ openapi {
 }
 
 route "GET /openapi.json" {
-  step "spec" {
+  spec {
     format = "json"
   }
 }
 
 route "GET /openapi.yaml" {
-  step "spec" {
+  spec {
     format = "yaml"
   }
 }
 
 route "GET /docs" {
-  step "docs" {
+  docs {
     renderer = "scalar"
   }
 }
 
 route "GET /docs/swagger" {
-  step "docs" {
+  docs {
     renderer = "swagger"
   }
 }
 
 route "GET /docs/elements" {
-  step "docs" {
+  docs {
     renderer = "elements"
   }
 }
 
 route "GET /docs/redoc" {
-  step "docs" {
+  docs {
     renderer = "redoc"
   }
 }
 
 route "GET /docs/custom" {
-  step "docs" {
-    template = <<HTML
-	<html>
-	<head>
-		<title>{{ .Title }}</title>
-	</head>
-	<body>
-		<h1>Custom Template</h1>
-		<p>
-			Source Specification:
-			<a href="{{ .SpecURL }}">{{ .SpecURL }}</a>
-		</p>
-	</body>
-	</html>
-	HTML
+  docs {
+    template = <<-HTML
+      <!doctype html>
+      <html>
+        <head><title>{{ .Title }}</title></head>
+        <body>
+          <h1>Custom Portal: {{ .Title }}</h1>
+          <p>Specification: <a href="{{ .SpecURL }}">{{ .SpecURL }}</a></p>
+        </body>
+      </html>
+    HTML
   }
 }
+
 route "GET /api/v1/ping" {
   summary = "Simple latency check"
   tag     = "system"
 
-  step "respond" {
+  respond {
     status = 200
     body = {
       status = "pong"

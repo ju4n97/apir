@@ -7,7 +7,7 @@ telemetry {
   service_name = "user-validation-service"
   logging {
     level  = "info"
-    redact = ["request.headers.x-api-key"]
+    redact = ["x-api-key"]
   }
 }
 
@@ -50,13 +50,13 @@ schema "UserCreate" {
 }
 
 route "GET /docs" {
-  step "docs" {
-    renderer = "scalar"
+  docs {
+    renderer = "elements"
   }
 }
 
 route "GET /openapi.json" {
-  step "spec" {
+  spec {
     format = "json"
   }
 }
@@ -78,10 +78,10 @@ route "POST /api/v1/users" {
       enum        = ["direct", "referral", "ad"]
       description = "User registration channel"
     }
-    body = schema.UserCreate
+    body = UserCreate
   }
 
-  step "respond" {
+  respond {
     status = 201
     body = {
       message    = "User validated and registered"
