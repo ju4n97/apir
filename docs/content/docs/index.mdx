@@ -40,37 +40,40 @@ Manifests are parsed and compiled once at boot time. esquema executes pipelines 
     items: [
       {
         text: "Concepts",
-        link: "/concepts/lifecycle",
+        link: "/docs/concepts/lifecycle",
         items: [
-          { text: "Request lifecycle", link: "/concepts/lifecycle" },
-          { text: "Execution context", link: "/concepts/context" },
-          { text: "Pipelines and steps", link: "/concepts/pipelines" },
-          { text: "Expressions & built-ins", link: "/concepts/expressions" },
-          { text: "Errors (RFC 9457)", link: "/concepts/errors" },
+          { text: "Request lifecycle", link: "/docs/concepts/lifecycle" },
+          { text: "Execution context", link: "/docs/concepts/context" },
+          { text: "Pipelines and steps", link: "/docs/concepts/pipelines" },
+          {
+            text: "Expressions & built-ins",
+            link: "/docs/concepts/expressions",
+          },
+          { text: "Errors (RFC 9457)", link: "/docs/concepts/errors" },
         ],
       },
       {
         text: "Manifest",
-        link: "/manifest/structure",
+        link: "/docs/manifest/structure",
         items: [
-          { text: "Files and structure", link: "/manifest/structure" },
-          { text: "server", link: "/manifest/server" },
-          { text: "connections", link: "/manifest/connections" },
-          { text: "schemas", link: "/manifest/schemas" },
-          { text: "routes", link: "/manifest/routes" },
-          { text: "Scalar types", link: "/manifest/types" },
+          { text: "Files and structure", link: "/docs/manifest/structure" },
+          { text: "server", link: "/docs/manifest/server" },
+          { text: "connections", link: "/docs/manifest/connections" },
+          { text: "schemas", link: "/docs/manifest/schemas" },
+          { text: "routes", link: "/docs/manifest/routes" },
+          { text: "Scalar types", link: "/docs/manifest/types" },
         ],
       },
       {
         text: "Pipeline steps",
-        link: "/steps/sql",
+        link: "/docs/steps/sql",
         items: [
-          { text: "sql", link: "/steps/sql" },
-          { text: "http", link: "/steps/http" },
-          { text: "valkey", link: "/steps/valkey" },
-          { text: "starlark", link: "/steps/starlark" },
-          { text: "go", link: "/steps/go" },
-          { text: "respond", link: "/steps/respond" },
+          { text: "sql", link: "/docs/steps/sql" },
+          { text: "http", link: "/docs/steps/http" },
+          { text: "valkey", link: "/docs/steps/valkey" },
+          { text: "starlark", link: "/docs/steps/starlark" },
+          { text: "go", link: "/docs/steps/go" },
+          { text: "respond", link: "/docs/steps/respond" },
         ],
       },
       {
@@ -114,7 +117,7 @@ A route consists of an HTTP method and path pattern, optional request validation
 3. Pipeline steps (`sql`, `http`, `valkey`, `starlark`, `go`) run sequentially in declared order and write outputs into the request context.
 4. A `respond` step terminates execution, applies schema egress masking, and streams the response.
 
-See [Request lifecycle](/concepts/lifecycle) for the execution model and [Pipelines and steps](/concepts/pipelines) for pipeline rules.
+See [Request lifecycle](/docs/concepts/lifecycle) for the execution model and [Pipelines and steps](/docs/concepts/pipelines) for pipeline rules.
 
 ## What esquema is for
 
