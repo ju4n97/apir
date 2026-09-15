@@ -295,7 +295,7 @@ func (e *Engine) bindRoutes() {
 				return
 			}
 
-			if prob := validateIngress(ctx, ep); prob != nil {
+			if prob := e.validateIngress(ctx, ep); prob != nil {
 				problem.Write(w, *prob)
 				return
 			}

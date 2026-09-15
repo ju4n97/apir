@@ -310,3 +310,106 @@ route "POST /upload" {
 		}
 	})
 }
+
+// TestEngine_Validate_DeepNestedSchemaValidation verifies that invalid types in deep nested schemas
+// return 422 Unprocessable Entity with exact parameter paths.
+func TestEngine_Validate_DeepNestedSchemaValidation(t *testing.T) {
+	t.Parallel()
+
+	manifest := `
+server {
+  host = "127.0.0.1"
+  port = 8080
+}
+
+schema "DocumentLink" {
+  field "id" {
+    type     = "integer"
+    required = true
+  }
+  field "download_url" {
+    type   = "string"
+    format = "uri"
+  }
+}
+
+schema "Study" {
+  field "id" {
+    type     = "integer"
+    required = true
+  }
+  field "carpals" {
+    type = "[]DocumentLink"
+  }
+}
+
+schema "WebhookPayload" {
+  field "data" {
+    type     = "Study"
+    required = true
+  }
+}
+
+route "POST /webhook" {
+  request {
+    body = WebhookPayload
+  }
+
+  respond {
+    status = 200
+  }
+}
+`
+
+	cfg, err := esquema.Parse(manifest)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	eng, err := esquema.New(cfg)
+	if err != nil {
+		t.Fatalf("engine init failed: %v", err)
+	}
+	t.Cleanup(func() { _ = eng.Close() })
+
+	// Send a payload where carpals[0].download_url is a number instead of a string
+	badPayload := `{
+		"data": {
+			"id": 100,
+			"carpals": [
+				{
+					"id": 1,
+					"download_url": 0
+				}
+			]
+		}
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(badPayload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	eng.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d; want 422 Unprocessable Entity. Body: %s", rec.Code, rec.Body.String())
+	}
+
+	var p problem.Problem
+	if err := json.NewDecoder(rec.Body).Decode(&p); err != nil {
+		t.Fatalf("failed to decode problem JSON: %v", err)
+	}
+
+	if len(p.InvalidParams) != 1 {
+		t.Fatalf("expected 1 invalid param, got %d: %+v", len(p.InvalidParams), p.InvalidParams)
+	}
+
+	ip := p.InvalidParams[0]
+	expectedName := "body.data.carpals[0].download_url"
+	if ip.Name != expectedName {
+		t.Errorf("invalid param name = %q; want %q", ip.Name, expectedName)
+	}
+	if ip.Reason != "must be a string" {
+		t.Errorf("invalid param reason = %q; want 'must be a string'", ip.Reason)
+	}
+}

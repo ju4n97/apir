@@ -16,11 +16,10 @@ import (
 	"github.com/ju4n97/esquema/internal/problem"
 )
 
-// uuidRegex validates RFC 4122 standard UUID formats.
 var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
 
-// validateIngress validates path, query, header, and body inputs against declared OpenAPI constraints.
-func validateIngress(ctx *Context, ep config.CompiledEndpoint) *problem.Problem {
+// validateIngress recursively validates path, query, header, and body inputs against OpenAPI schemas.
+func (e *Engine) validateIngress(ctx *Context, ep config.CompiledEndpoint) *problem.Problem {
 	if !ep.Request.HasRules() {
 		return nil
 	}
@@ -110,6 +109,8 @@ func validateIngress(ctx *Context, ep config.CompiledEndpoint) *problem.Problem 
 
 		for name, field := range ep.Request.Body {
 			val, exists := bodyMap[name]
+			path := "body." + name
+
 			if !exists || val == nil {
 				if field.Default != nil {
 					bodyMap[name] = field.Default
@@ -117,19 +118,14 @@ func validateIngress(ctx *Context, ep config.CompiledEndpoint) *problem.Problem 
 				}
 				if field.Required {
 					invalidParams = append(invalidParams, problem.InvalidParam{
-						Name:   "body." + name,
+						Name:   path,
 						Reason: "field is required",
 					})
 				}
 				continue
 			}
 
-			if reason := validateTypedValue(val, field); reason != "" {
-				invalidParams = append(invalidParams, problem.InvalidParam{
-					Name:   "body." + name,
-					Reason: reason,
-				})
-			}
+			e.validateDeepField(path, val, field, &invalidParams)
 		}
 		ctx.bodyData = bodyMap
 	}
@@ -141,6 +137,131 @@ func validateIngress(ctx *Context, ep config.CompiledEndpoint) *problem.Problem 
 	}
 
 	return nil
+}
+
+// validateDeepField recursively evaluates fields, nested schemas, and array elements.
+func (e *Engine) validateDeepField(path string, val any, field config.Field, invalidParams *[]problem.InvalidParam) {
+	// Direct nested schema reference
+	if field.SchemaRef != "" && field.Type == config.DataTypeObject {
+		nestedSchema, exists := e.cfg.Schemas[field.SchemaRef]
+		if !exists {
+			return
+		}
+
+		m, ok := val.(map[string]any)
+		if !ok {
+			*invalidParams = append(*invalidParams, problem.InvalidParam{
+				Name:   path,
+				Reason: "must be an object",
+			})
+			return
+		}
+
+		for fName, f := range nestedSchema.Fields {
+			subPath := path + "." + fName
+			subVal, subExists := m[fName]
+
+			if !subExists || subVal == nil {
+				if f.Default != nil {
+					m[fName] = f.Default
+					continue
+				}
+				if f.Required {
+					*invalidParams = append(*invalidParams, problem.InvalidParam{
+						Name:   subPath,
+						Reason: "field is required",
+					})
+				}
+				continue
+			}
+
+			e.validateDeepField(subPath, subVal, f, invalidParams)
+		}
+		return
+	}
+
+	// Array of custom schemas or primitives
+	if field.Type == config.DataTypeArray {
+		list, ok := val.([]any)
+		if !ok {
+			*invalidParams = append(*invalidParams, problem.InvalidParam{
+				Name:   path,
+				Reason: "must be an array",
+			})
+			return
+		}
+
+		if field.MinLength != nil && len(list) < *field.MinLength {
+			*invalidParams = append(*invalidParams, problem.InvalidParam{
+				Name:   path,
+				Reason: fmt.Sprintf("array must contain at least %d items", *field.MinLength),
+			})
+		}
+		if field.MaxLength != nil && len(list) > *field.MaxLength {
+			*invalidParams = append(*invalidParams, problem.InvalidParam{
+				Name:   path,
+				Reason: fmt.Sprintf("array must contain at most %d items", *field.MaxLength),
+			})
+		}
+
+		for i, item := range list {
+			itemPath := fmt.Sprintf("%s[%d]", path, i)
+
+			if field.SchemaRef != "" {
+				nestedSchema, exists := e.cfg.Schemas[field.SchemaRef]
+				if !exists {
+					continue
+				}
+
+				elemMap, isMap := item.(map[string]any)
+				if !isMap {
+					*invalidParams = append(*invalidParams, problem.InvalidParam{
+						Name:   itemPath,
+						Reason: "must be an object",
+					})
+					continue
+				}
+
+				for fName, f := range nestedSchema.Fields {
+					subPath := itemPath + "." + fName
+					subVal, subExists := elemMap[fName]
+
+					if !subExists || subVal == nil {
+						if f.Default != nil {
+							elemMap[fName] = f.Default
+							continue
+						}
+						if f.Required {
+							*invalidParams = append(*invalidParams, problem.InvalidParam{
+								Name:   subPath,
+								Reason: "field is required",
+							})
+						}
+						continue
+					}
+
+					e.validateDeepField(subPath, subVal, f, invalidParams)
+				}
+			} else if field.ItemsType != "" {
+				elemField := config.Field{Type: field.ItemsType, Format: field.Format}
+				if reason := validateTypedValue(item, elemField); reason != "" {
+					*invalidParams = append(*invalidParams, problem.InvalidParam{
+						Name:   itemPath,
+						Reason: reason,
+					})
+				}
+			}
+		}
+		return
+	}
+
+	// Scalar primitives (string, integer, number, boolean)
+	if reason := validateTypedValue(val, field); reason != "" {
+		*invalidParams = append(*invalidParams, problem.InvalidParam{
+			Name:   path,
+			Reason: reason,
+		})
+	}
 }
 
 // coerceScalar converts validated scalar strings into typed Go primitives.
