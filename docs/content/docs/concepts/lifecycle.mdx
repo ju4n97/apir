@@ -1,37 +1,42 @@
 ---
 title: Request lifecycle
-description: How hclapi validates manifests at boot and executes the same fixed pipeline for each request.
+description: Two phase execution from boot compilation to runtime request dispatch.
 ---
 
-import { Steps } from "@rspress/core/theme";
+# Request lifecycle
 
-hclapi has two phases. Manifests are validated once, at boot. Every request after that runs the same fixed pipeline.
+esquema operates in two distinct phases. Manifests are verified once when the server boots, and incoming requests run through a fast, sequential execution pipeline.
 
-| Phase   | Trigger               | Result                                                  | On failure                                       |
-| :------ | :-------------------- | :------------------------------------------------------ | :----------------------------------------------- |
-| Boot    | `hclapi serve` starts | Manifests parsed, connections opened, routes registered | Process exits with a file and line diagnostic    |
-| Request | HTTP request arrives  | Route matched, pipeline runs, response serialized       | Request returns RFC 9457 error; server continues |
+| Phase       | Trigger               | Actions                                                                                             | On failure                                              |
+| :---------- | :-------------------- | :-------------------------------------------------------------------------------------------------- | :------------------------------------------------------ |
+| **Boot**    | `esquema serve` boots | Discovers files, opens connection pools, precompiles Starlark scripts, and caches OpenAPI documents | Halts immediately with a clear terminal diagnostic      |
+| **Request** | HTTP call arrives     | Enforces size limits, validates inputs, executes steps, and streams response                        | Returns an RFC 9457 error payload; server keeps running |
 
-## Stages
+## Execution stages
 
-<Steps>
+Incoming HTTP Request
 
-### 1. Ingress
+1. Telemetry and panic guard
+   - Starts root trace timer and extracts W3C traceparent headers
+   - Captures unexpected panics and converts them to RFC 9457 500 responses
 
-The method and path are matched. Headers, query parameters, and body are parsed.
+2. Payload size enforcement
+   - Reads the body through an io.LimitReader bounded by server.max_body_size
+   - Halts immediately with HTTP 413 if the payload is too large
 
-### 2. Context initialization
+3. Ingress validation and type coercion
+   - Validates path, query, header, and body data against schema constraints
+   - Rejects invalid payloads with HTTP 422 or malformed JSON with HTTP 400
+   - Coerces valid scalar path and query parameters into native int64, float64, and bool types
 
-A request-scoped [execution context](./context) is created.
+4. Context initialization
+   - Builds the request-scoped ctx object holding input coordinates and timestamps
 
-### 3. Step execution
+5. Sequential step execution
+   - Runs declared steps (sql, http, valkey, starlark, go) one by one
+   - Emits individual OpenTelemetry step spans and records step outputs into context
 
-[Pipeline steps](./pipelines) run in order, reading from and appending to the context.
-
-### 4. Response
-
-A `respond` step serializes status, headers, and body, and terminates the pipeline.
-
-</Steps>
-
-A request that fails schema validation or arrives with unparseable JSON never reaches step execution.
+6. Respond and egress masking
+   - Evaluates conditional when expressions to select matching response
+   - Applies schema masks to prune undeclared fields
+   - Streams JSON or raw non-JSON payloads based on Content-Type

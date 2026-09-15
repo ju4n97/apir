@@ -1,0 +1,90 @@
+---
+title: openapi
+description: Global OpenAPI 3.1 specification metadata, servers, tags, and license info.
+---
+
+# openapi
+
+The `openapi` block configures global document metadata exported into your OpenAPI 3.1 specifications and documentation viewers.
+
+```hcl
+openapi {
+  title       = "Storefront API"
+  version     = "1.2.0"
+  description = "Customer and order management services"
+
+  server {
+    url         = "https://api.example.com/v1"
+    description = "Production cluster"
+  }
+
+  tag {
+    name        = "users"
+    description = "User accounts and permissions"
+  }
+
+  contact {
+    name  = "API Support"
+    email = "support@example.com"
+    url   = "https://example.com/support"
+  }
+
+  license {
+    name = "Apache-2.0"
+    url  = "https://www.apache.org/licenses/LICENSE-2.0"
+  }
+}
+```
+
+## Top level attributes
+
+| Attribute     | Type     | Default               | Description                                         |
+| :------------ | :------- | :-------------------- | :-------------------------------------------------- |
+| `title`       | `string` | `"API Documentation"` | Document title in `info.title`                      |
+| `version`     | `string` | `"1.0.0"`             | API semantic version in `info.version`              |
+| `description` | `string` | `""`                  | Markdown description exported to `info.description` |
+
+## Nested blocks
+
+### server
+
+Declares target deployment origins:
+
+```hcl
+server {
+  url         = "https://api.example.com/v1"
+  description = "Production server"
+}
+```
+
+If you don't declare any server block, esquema defaults to `url = "/"`. This keeps browser documentation portals like Scalar and Swagger on the exact same origin, so you won't run into CORS issues during local testing.
+
+### tag
+
+Organizes routes into logical groups inside documentation portals:
+
+```hcl
+tag {
+  name        = "orders"
+  description = "Cart updates and order checkout"
+}
+```
+
+### contact
+
+```hcl
+contact {
+  name  = "API Team"
+  email = "api@example.com"
+  url   = "https://example.com"
+}
+```
+
+### license
+
+```hcl
+license {
+  name = "MIT"
+  url  = "https://opensource.org/licenses/MIT"
+}
+```

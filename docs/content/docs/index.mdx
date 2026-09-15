@@ -1,23 +1,17 @@
 ---
 title: Introduction
-description: A declarative backend engine that turns HCL manifests, SQL, and Starlark into HTTP APIs.
+description: A declarative runtime that turns HCL manifests, SQL, and Starlark into HTTP APIs.
 pageType: doc-wide
 ---
 
 import { OverviewGroup, SourceCode } from "@rspress/core/theme";
 
-# hclapi
+# Introduction
 
-hclapi is a backend engine distributed as a single binary. It turns HashiCorp
-Configuration Language (HCL) manifests into HTTP APIs, combining data access,
-business logic, validation, and API definitions in a single declarative
-configuration, with built-in OpenAPI generation.
+esquema is a lightweight API engine distributed as a single binary and embeddable Go module. It turns HCL manifests into instant HTTP APIs, combining data access, validation, transformation, and route definitions in a single declarative runtime with zero-drift OpenAPI 3.1 generation.
 
-:::info Request-time manifests
-
-Manifests are read and executed at request time. hclapi does not generate or
-compile Go source.
-
+:::info Request-time execution
+Manifests are parsed and compiled once at boot time. esquema executes pipelines dynamically per request without generating or compiling Go source.
 :::
 
 <OverviewGroup
@@ -27,19 +21,14 @@ compile Go source.
       {
         text: "Installation",
         link: "/installation",
-        headers: [
-          {
-            id: "precompiled-binaries",
-            text: "Precompiled binaries",
-            depth: 2,
-          },
-          { id: "build-from-source", text: "Build from source", depth: 2 },
-        ],
       },
       {
         text: "Quickstart",
         link: "/quickstart",
-        headers: [{ id: "your-first-api", text: "Your first API", depth: 2 }],
+      },
+      {
+        text: "Why esquema",
+        link: "/why",
       },
     ],
   }}
@@ -56,19 +45,19 @@ compile Go source.
           { text: "Request lifecycle", link: "/concepts/lifecycle" },
           { text: "Execution context", link: "/concepts/context" },
           { text: "Pipelines and steps", link: "/concepts/pipelines" },
-          { text: "Expressions", link: "/concepts/expressions" },
-          { text: "Errors", link: "/concepts/errors" },
+          { text: "Expressions & built-ins", link: "/concepts/expressions" },
+          { text: "Errors (RFC 9457)", link: "/concepts/errors" },
         ],
       },
       {
         text: "Manifest",
         link: "/manifest/structure",
         items: [
-          { text: "Files and merging", link: "/manifest/structure" },
+          { text: "Files and structure", link: "/manifest/structure" },
           { text: "server", link: "/manifest/server" },
-          { text: "connection", link: "/manifest/connections" },
-          { text: "schema", link: "/manifest/schemas" },
-          { text: "endpoint", link: "/manifest/endpoints" },
+          { text: "connections", link: "/manifest/connections" },
+          { text: "schemas", link: "/manifest/schemas" },
+          { text: "routes", link: "/manifest/routes" },
           { text: "Scalar types", link: "/manifest/types" },
         ],
       },
@@ -77,49 +66,24 @@ compile Go source.
         link: "/steps/sql",
         items: [
           { text: "sql", link: "/steps/sql" },
+          { text: "http", link: "/steps/http" },
+          { text: "valkey", link: "/steps/valkey" },
           { text: "starlark", link: "/steps/starlark" },
-          { text: "redis", link: "/steps/redis" },
-          { text: "transaction", link: "/steps/transaction" },
-          { text: "parallel", link: "/steps/parallel" },
           { text: "go", link: "/steps/go" },
           { text: "respond", link: "/steps/respond" },
         ],
       },
       {
-        text: "Guides",
-        link: "/guides/go",
-        headers: [{ id: "go-integration", text: "Go integration", depth: 2 }],
-      },
-      {
         text: "Patterns",
         link: "/patterns",
-        headers: [
-          {
-            id: "404-on-a-missing-record",
-            text: "404 on a missing record",
-            depth: 2,
-          },
-          { id: "cache-aside", text: "Cache aside", depth: 2 },
-          {
-            id: "transactional-writes",
-            text: "Transactional writes",
-            depth: 2,
-          },
-          {
-            id: "parallel-aggregation",
-            text: "Parallel aggregation",
-            depth: 2,
-          },
-        ],
+      },
+      {
+        text: "Guides",
+        link: "/guides/go",
       },
       {
         text: "CLI reference",
-        link: "/cli/hclapi",
-        items: [
-          { text: "hclapi", link: "/cli/hclapi" },
-          { text: "hclapi serve", link: "/cli/hclapi-serve" },
-          { text: "hclapi version", link: "/cli/hclapi-version" },
-        ],
+        link: "/cli/esquema",
       },
     ],
   }}
@@ -141,36 +105,25 @@ compile Go source.
   }}
 />
 
-## How hclapi works
+## How esquema works
 
-An endpoint consists of an HTTP route, optional request validation, and an
-ordered pipeline of steps.
+A route consists of an HTTP method and path pattern, optional request validation, and an ordered pipeline of steps:
 
-1. A request is matched against an `endpoint`.
+1. An incoming request matches against a `route` block pattern (e.g. `POST /users/{id}`).
+2. Path, query, header, and body data are validated against declared schema constraints, with valid scalar parameters coerced into native Go types (`int64`, `float64`, `bool`).
+3. Pipeline steps (`sql`, `http`, `valkey`, `starlark`, `go`) run sequentially in declared order and write outputs into the request context.
+4. A `respond` step terminates execution, applies schema egress masking, and streams the response.
 
-2. Path, query, header, and body data are validated when a request schema is defined.
+See [Request lifecycle](/concepts/lifecycle) for the execution model and [Pipelines and steps](/concepts/pipelines) for pipeline rules.
 
-3. Pipeline steps execute in order and write their outputs into the request context.
+## What esquema is for
 
-4. A `respond` step terminates the pipeline and writes the HTTP response.
+esquema is intended for HTTP APIs where the service layer is primarily an interface over data storage and external services. It keeps route definitions, queries, input validation, and transformations together in readable HCL manifests.
 
-See [Request lifecycle](./concepts/lifecycle.md) for the complete execution model and [Pipelines and steps](./concepts/pipelines.md) for pipeline execution rules.
-
-## What hclapi is for
-
-hclapi is intended for small HTTP APIs where the API layer is mostly a thin
-interface over existing data.
-
-It keeps endpoint definitions, queries, validation, and request processing
-close together in the manifest.
-
-hclapi does not replace a general-purpose backend framework. Services that
-require substantial application logic, complex workflows, long-running state,
-identity and authentication, schema management, or multiple cooperating
-services may be better implemented in application code.
+esquema doesn't replace general-purpose application frameworks for complex long-running worker loops, background job queues, or stateful streaming sessions.
 
 ## Source
 
-Source and issue tracker:
+Source code and issue tracker:
 
-<SourceCode href="https://github.com/ju4n97/hclapi" />
+<SourceCode href="https://github.com/ju4n97/esquema" />

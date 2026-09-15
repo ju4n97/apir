@@ -1,0 +1,81 @@
+.nh
+.TH esquema 8
+
+.SH NAME
+.PP
+esquema - Type-safe, declarative API runtime powered by HCL.
+
+
+.SH SYNOPSIS
+.PP
+esquema
+
+.PP
+\fBUsage\fP:
+
+.PP
+.RS
+
+.nf
+esquema [GLOBAL OPTIONS] [command [COMMAND OPTIONS]] [ARGUMENTS...]
+
+.fi
+.RE
+
+
+.SH COMMANDS
+.SH serve, s
+.PP
+Start the HTTP API server from compiled manifests
+
+.PP
+\fB--config, -c, --manifests, -m\fP="": Manifest file, directory, or glob pattern (can be specified multiple times)
+
+.PP
+\fB--host, -H\fP="": Host address to bind the listener (overrides manifest)
+
+.PP
+\fB--log-format\fP="": Log output format (text, json) (default: "text")
+
+.PP
+\fB--log-level\fP="": Log level (debug, info, warn, error) (default: "info")
+
+.PP
+\fB--port, -p\fP="": Port to bind the listener (overrides manifest) (default: 0)
+
+.PP
+\fB--verbose, -v\fP: Enable debug logging (shorthand for --log-level=debug)
+
+.SH openapi, oas, spec
+.PP
+Export OpenAPI 3.1 specification for the compiled manifests
+
+.PP
+\fB--config, -c\fP="": Manifest file, directory, or glob pattern
+
+.PP
+\fB--format, -f\fP="": Output format (json, yaml) (default: "json")
+
+.PP
+\fB--output, -o\fP="": Write output to a file instead of stdout
+
+.SH lint, check, validate
+.PP
+Validate manifest schemas, types, and referential integrity
+
+.PP
+\fB--config, -c\fP="": Manifest file, directory, or glob pattern
+
+.SH routes
+.PP
+List all compiled endpoints and pipeline step sequences
+
+.PP
+\fB--config, -c\fP="": Manifest file, directory, or glob pattern
+
+.SH version, v
+.PP
+Print version and build metadata
+
+.PP
+\fB--short, -s\fP: Print only the semantic version string

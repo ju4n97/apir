@@ -1,1 +1,42 @@
-["sql", "starlark", "redis", "transaction", "parallel", "go", "respond"]
+[
+  {
+    "type": "file",
+    "name": "sql",
+    "label": "sql"
+  },
+  {
+    "type": "file",
+    "name": "http",
+    "label": "http"
+  },
+  {
+    "type": "file",
+    "name": "valkey",
+    "label": "valkey"
+  },
+  {
+    "type": "file",
+    "name": "starlark",
+    "label": "starlark"
+  },
+  {
+    "type": "file",
+    "name": "go",
+    "label": "go"
+  },
+  {
+    "type": "file",
+    "name": "docs",
+    "label": "docs"
+  },
+  {
+    "type": "file",
+    "name": "spec",
+    "label": "spec"
+  },
+  {
+    "type": "file",
+    "name": "respond",
+    "label": "respond"
+  }
+]

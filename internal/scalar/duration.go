@@ -3,25 +3,34 @@ package scalar
 import (
 	"fmt"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
-// Duration wraps a time.Duration with universal text deserialization.
+// Duration wraps time.Duration with text and YAML unmarshaling.
 type Duration time.Duration
 
-// Duration returns the duration as a time.Duration.
+// Duration returns the underlying time.Duration.
 func (d Duration) Duration() time.Duration {
 	return time.Duration(d)
 }
 
-// String returns the duration as a human-readable string.
+// String returns the formatted duration string.
 func (d Duration) String() string {
 	return time.Duration(d).String()
 }
 
-// UnmarshalText implements the encoding.TextUnmarshaler interface.
+// ParseDuration parses a human-readable duration string.
+func ParseDuration(s string) (Duration, error) {
+	var d Duration
+	err := d.UnmarshalText([]byte(s))
+	return d, err
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
 func (d *Duration) UnmarshalText(text []byte) error {
 	s := string(text)
-	if s == "" {
+	if s == "" || s == "0" {
 		*d = Duration(0)
 		return nil
 	}
@@ -35,14 +44,12 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// MarshalText implements the encoding.TextMarshaler interface.
+// MarshalText implements encoding.TextMarshaler.
 func (d Duration) MarshalText() ([]byte, error) {
 	return []byte(d.String()), nil
 }
 
-// ParseDuration parses human-readable duration strings like "30s", "15m", "1h".
-func ParseDuration(s string) (Duration, error) {
-	var d Duration
-	err := d.UnmarshalText([]byte(s))
-	return d, err
+// UnmarshalYAML implements yaml.Unmarshaler.
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	return d.UnmarshalText([]byte(value.Value))
 }

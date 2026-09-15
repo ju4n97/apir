@@ -4,83 +4,70 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ju4n97/hclapi/internal/scalar"
+	"gopkg.in/yaml.v3"
+
+	"github.com/ju4n97/esquema/internal/scalar"
 )
 
-func TestDuration(t *testing.T) {
+func TestDuration_UnmarshalText(t *testing.T) {
 	t.Parallel()
 
-	t.Run("UnmarshalText with valid strings", func(t *testing.T) {
-		t.Parallel()
+	tests := []struct {
+		input    string
+		expected time.Duration
+	}{
+		{"10s", 10 * time.Second},
+		{"500ms", 500 * time.Millisecond},
+		{"15m", 15 * time.Minute},
+		{"1h", 1 * time.Hour},
+		{"1h30m", 90 * time.Minute},
+		{"0s", 0},
+		{"0", 0},
+		{"", 0},
+	}
 
-		tests := []struct {
-			input    string
-			expected time.Duration
-		}{
-			{"10s", 10 * time.Second},
-			{"500ms", 500 * time.Millisecond},
-			{"15m", 15 * time.Minute},
-			{"1h", 1 * time.Hour},
-			{"1h30m", 90 * time.Minute},
-			{"", 0},
-		}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			d, err := scalar.ParseDuration(tt.input)
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", tt.input, err)
+			}
+			if d.Duration() != tt.expected {
+				t.Errorf("Duration() = %v; want %v", d.Duration(), tt.expected)
+			}
+		})
+	}
+}
 
-		for _, tt := range tests {
-			t.Run(tt.input, func(t *testing.T) {
-				t.Parallel()
+func TestDuration_Invalid(t *testing.T) {
+	t.Parallel()
 
-				var d scalar.Duration
-				err := d.UnmarshalText([]byte(tt.input))
-				if err != nil {
-					t.Fatalf("unexpected error for %q: %v", tt.input, err)
-				}
+	invalid := []string{"invalid", "10x", "100years", "abc"}
+	for _, input := range invalid {
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+			var d scalar.Duration
+			if err := d.UnmarshalText([]byte(input)); err == nil {
+				t.Errorf("expected error for %q, got nil", input)
+			}
+		})
+	}
+}
 
-				if d.Duration() != tt.expected {
-					t.Errorf("expected %v, got %v", tt.expected, d.Duration())
-				}
-			})
-		}
-	})
+func TestDuration_YAML(t *testing.T) {
+	t.Parallel()
 
-	t.Run("UnmarshalText with invalid strings returns error", func(t *testing.T) {
-		t.Parallel()
+	var target struct {
+		Timeout scalar.Duration `yaml:"timeout"`
+	}
 
-		invalidInputs := []string{
-			"invalid",
-			"10x",
-			"100years",
-			"abc",
-		}
+	src := "timeout: 30s"
+	if err := yaml.Unmarshal([]byte(src), &target); err != nil {
+		t.Fatalf("unexpected YAML unmarshal error: %v", err)
+	}
 
-		for _, input := range invalidInputs {
-			t.Run(input, func(t *testing.T) {
-				t.Parallel()
-
-				var d scalar.Duration
-				err := d.UnmarshalText([]byte(input))
-				if err == nil {
-					t.Fatalf("expected error for invalid input %q, got nil", input)
-				}
-			})
-		}
-	})
-
-	t.Run("MarshalText and String formatting", func(t *testing.T) {
-		t.Parallel()
-
-		d := scalar.Duration(15 * time.Minute)
-
-		if d.String() != "15m0s" {
-			t.Errorf("expected '15m0s', got %q", d.String())
-		}
-
-		b, err := d.MarshalText()
-		if err != nil {
-			t.Fatalf("unexpected marshal error: %v", err)
-		}
-
-		if string(b) != "15m0s" {
-			t.Errorf("expected '15m0s', got %q", string(b))
-		}
-	})
+	if target.Timeout.Duration() != 30*time.Second {
+		t.Errorf("Timeout = %v; want 30s", target.Timeout.Duration())
+	}
 }

@@ -1,1 +1,27 @@
-["lifecycle", "context", "pipelines", "expressions", "errors"]
+[
+  {
+    "type": "file",
+    "name": "lifecycle",
+    "label": "Request lifecycle"
+  },
+  {
+    "type": "file",
+    "name": "context",
+    "label": "Execution context"
+  },
+  {
+    "type": "file",
+    "name": "pipelines",
+    "label": "Pipelines and steps"
+  },
+  {
+    "type": "file",
+    "name": "expressions",
+    "label": "Expressions and built-ins"
+  },
+  {
+    "type": "file",
+    "name": "errors",
+    "label": "Errors and problem details"
+  }
+]

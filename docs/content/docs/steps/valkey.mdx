@@ -1,0 +1,66 @@
+---
+title: valkey
+description: Key-value caching operations against Valkey and Redis pools.
+---
+
+# valkey
+
+The `valkey` step runs caching commands against a declared `connection "valkey"` instance.
+
+```hcl
+# Read from cache
+step "valkey" "check_cache" {
+  connection = "cache"
+  op         = "get"
+  key        = "users:${ctx.request.path.id}"
+}
+
+# Write with TTL
+step "valkey" "save_cache" {
+  connection = "cache"
+  op         = "set"
+  key        = "users:${ctx.request.path.id}"
+  value      = steps.fetch_user.row
+  ttl        = "15m"
+}
+
+# Delete key
+step "valkey" "purge" {
+  connection = "cache"
+  op         = "del"
+  key        = "users:${ctx.request.path.id}"
+}
+```
+
+## Attributes
+
+| Attribute    | Type       | Required | Description                                 |
+| :----------- | :--------- | :------: | :------------------------------------------ |
+| `connection` | `string`   |   yes    | Declared `connection "valkey"` identifier   |
+| `op`         | `string`   |   yes    | `"get"`, `"set"`, or `"del"`                |
+| `key`        | `string`   |   yes    | Cache key expression                        |
+| `value`      | `any`      | for set  | Payload serialized as a JSON string         |
+| `ttl`        | `Duration` |    no    | Expiration duration like `"10m"` or `"24h"` |
+| `when`       | `bool`     |    no    | Conditional expression                      |
+
+## Exported outputs
+
+### For `op = "get"`
+
+- `steps.<name>.found`: `true` if the key exists, `false` on a cache miss.
+- `steps.<name>.value`: Unmarshaled JSON data, or `null` if missing.
+
+A cache miss doesn't return an error. It sets `found = false` so you can fall back to database queries conditionally:
+
+```hcl
+step "sql" "fetch_db" {
+  when       = !steps.check_cache.found
+  connection = "main"
+  query      = "SELECT id, email FROM users WHERE id = @id"
+  args       = { id = ctx.request.path.id }
+}
+```
+
+### For `op = "set"` and `op = "del"`
+
+- `steps.<name>.success`: `true` when the operation succeeds.

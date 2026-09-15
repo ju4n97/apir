@@ -1,66 +1,80 @@
 ---
 title: Execution context
-description: The request-scoped ctx object and the data exposed by requests and completed pipeline steps.
+description: The request-scoped ctx container and how steps access execution data.
 ---
 
-`ctx` is the request-scoped object every step reads from. It holds the incoming request and the accumulated output of prior steps.
+# Execution context
+
+Every request initializes a request-scoped `ctx` container. It stores incoming request parameters alongside outputs recorded by previous pipeline steps.
 
 ```text
 ctx
-├── timestamp_epoch : int
-├── request
-│   ├── method  : string
-│   ├── path    : map[string]string
-│   ├── query   : map[string]string
-│   ├── headers : map[string]string
-│   └── body    : any
-└── steps
-    ├── <sql_step_name>
-    │   ├── rows          : list(map)
-    │   ├── row           : map (or null)
-    │   └── rows_affected : int
-    ├── <redis_step_name>
-    │   └── value         : any
-    ├── <starlark_step_name>
-    │   └── result        : any
-    └── <go_step_name>
-        └── result        : any
+├── timestamp : int (Unix epoch seconds)
+├── now       : string (RFC 3339 UTC timestamp)
+└── request
+    ├── method  : string ("GET", "POST", etc.)
+    ├── path    : map[string]any (typed path parameters)
+    ├── query   : map[string]any (typed query parameters)
+    ├── headers : map[string]string (lowercased header values)
+    └── body    : map[string]any (parsed JSON body or raw text)
+
+steps
+└── <step_name>
+    ├── rows          : list of map (all returned SQL rows)
+    ├── row           : map or null (first SQL row)
+    ├── rows_affected : int (number of rows returned or updated)
+    ├── status        : int (outbound HTTP status code)
+    ├── body          : any (outbound HTTP response body)
+    ├── found         : bool (Valkey cache hit flag)
+    ├── value         : any (Valkey cached payload)
+    ├── success       : bool (Valkey write or delete flag)
+    └── result        : any (value returned by Starlark or Go steps)
 ```
 
-## Request
+## Accessing data in HCL expressions
 
-The request object is populated at ingress and remains immutable for the life of the request.
+You can access context coordinates directly using standard dot syntax in step attributes:
 
-| Field                 | Type                | Example                             |
-| :-------------------- | :------------------ | :---------------------------------- |
-| `ctx.request.method`  | `string`            | `"POST"`                            |
-| `ctx.request.path`    | `map[string]string` | `ctx.request.path.id`               |
-| `ctx.request.query`   | `map[string]string` | `ctx.request.query.page`            |
-| `ctx.request.headers` | `map[string]string` | `ctx.request.headers.authorization` |
-| `ctx.request.body`    | `any`               | `ctx.request.body.email`            |
+```hcl
+step "sql" "update_user" {
+  connection = "main"
+  query      = "UPDATE users SET email = @email WHERE id = @id"
+  args = {
+    id    = ctx.request.path.id
+    email = ctx.request.body.email
+  }
+}
+```
 
-Path parameters are bound from route templates. Catch-all parameters such as `{filepath...}` bind the remaining path. Header keys are lowercased at ingress.
+Headers are normalized to lowercase per RFC 9110, so `X-API-Key` is accessed via `ctx.request.headers.x-api-key`.
 
-## Steps
+## Accessing data in Starlark
 
-| Step type      | Exported fields                | Description                                  |
-| :------------- | :----------------------------- | :------------------------------------------- |
-| **`sql`**      | `rows`, `row`, `rows_affected` | Query results and affected-row count         |
-| **`redis`**    | `value`                        | Retrieved cache value or command result      |
-| **`starlark`** | `result`                       | Value returned by `execute(ctx)`             |
-| **`go`**       | `result`                       | Value returned by the registered Go function |
+In Starlark scripts, `ctx` is passed as a standard dictionary to your `execute(ctx)` function:
 
-## Access from HCL and Starlark
+```python
+def execute(ctx):
+    user_id = ctx["request"]["path"]["id"]
+    body = ctx["request"]["body"]
+    user_row = ctx["steps"]["find_user"]["row"]
 
-In HCL expressions, `steps` is available as a root-level shorthand for `ctx.steps`. In Starlark scripts, values are accessed beneath `ctx` using dictionary syntax.
+    return {
+        "user_id": user_id,
+        "email": body.get("email", "").strip().lower(),
+        "role": user_row.get("role", "member"),
+    }
+```
 
-| Value           | HCL                                 | Starlark                                         |
-| :-------------- | :---------------------------------- | :----------------------------------------------- |
-| Path parameter  | `ctx.request.path.id`               | `ctx.request.path["id"]`                         |
-| Query parameter | `ctx.request.query.filter`          | `ctx.request.query.get("filter")`                |
-| Header          | `ctx.request.headers.authorization` | `ctx.request.headers.get("authorization")`       |
-| Body field      | `ctx.request.body.name`             | `ctx.request.body["name"]`                       |
-| SQL record      | `steps.lookup.row.user_id`          | `ctx.steps.lookup.get("row", {}).get("user_id")` |
-| SQL list        | `steps.list_users.rows`             | `ctx.steps.list_users["rows"]`                   |
-| Redis value     | `steps.cache_lookup.value`          | `ctx.steps.cache_lookup.get("value")`            |
-| Step result     | `steps.compute.result`              | `ctx.steps.compute["result"]`                    |
+## Accessing data in native Go steps
+
+In Go callbacks, extract parameters safely using `step.Args`:
+
+```go
+func handleStep(ctx context.Context, step *esquema.Step) (any, error) {
+    userID := step.Args.GetOr("id", int64(0))
+    email, ok := step.Args.Get[string]("email")
+    rawRequest := step.Request // Untouched standard *http.Request
+
+    return map[string]any{"id": userID, "email": email}, nil
+}
+```

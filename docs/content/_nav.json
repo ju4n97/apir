@@ -2,7 +2,7 @@
   {
     "text": "Documentation",
     "link": "/docs/",
-    "activeMatch": "^(?!/docs/manifest/|/docs/steps/|/docs/guides/|/docs/cli/).*"
+    "activeMatch": "^(?!/docs/manifest/|/docs/steps/|/docs/guides/|/docs/content/cli/).*"
   },
   {
     "text": "Manifest",
@@ -21,8 +21,8 @@
   },
   {
     "text": "CLI reference",
-    "link": "/cli/hclapi",
-    "activeMatch": "^/cli/"
+    "link": "/cli/esquema",
+    "activeMatch": "^/docs/content/cli/"
   },
   {
     "text": "OpenAPI",

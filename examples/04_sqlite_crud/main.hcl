@@ -3,202 +3,227 @@ server {
   port = 8080
 }
 
-connection "sqlite" "main" {
-  source = "file:./data/todos.db?mode=rwc"
+openapi {
+  title       = "Todo Persistence API"
+  version     = "1.0.0"
+  description = "Full relational CRUD workflow backed by embedded SQLite"
+}
 
+connection "sql" "main" {
+  engine = "sqlite"
+  source = "file:./data/todos.db?mode=rwc"
   pool {
-    max_open     = 1
-    idle_timeout = "10m"
+    max_open = 1
   }
 }
 
-schema "todo_create" {
-  field "title" {
-    type     = string
+schema "Todo" {
+  field "id" {
+    type     = "integer"
     required = true
   }
-}
-
-schema "todo_update" {
   field "title" {
-    type = string
+    type       = "string"
+    required   = true
+    min_length = 1
   }
-
   field "completed" {
-    type = bool
+    type    = "boolean"
+    default = false
+  }
+  field "created_at" {
+    type   = "string"
+    format = "date-time"
   }
 }
 
-endpoint "GET /openapi.json" {
-  openapi "spec" {
+schema "TodoCreate" {
+  field "title" {
+    type       = "string"
+    required   = true
+    min_length = 1
+  }
+}
+
+schema "TodoUpdate" {
+  field "title" {
+    type       = "string"
+    min_length = 1
+  }
+  field "completed" {
+    type = "boolean"
+  }
+}
+
+route "GET /docs" {
+  step "docs" {
+    renderer = "scalar"
+  }
+}
+
+route "GET /openapi.json" {
+  step "spec" {
     format = "json"
   }
 }
 
-endpoint "GET /docs" {
-  openapi "ui" {
-    renderer = "swagger"
+route "GET /api/v1/todos" {
+  summary = "List all stored todos"
+  tag     = "todos"
+
+  step "sql" "list" {
+    connection = "main"
+    query      = "SELECT id, title, completed, created_at FROM todos ORDER BY id DESC"
+  }
+
+  step "respond" {
+    status = 200
+    schema = "[]Todo"
+    body   = steps.list.rows
   }
 }
 
-endpoint "GET /api/v1/todos" {
-  description = "Lists all stored todos."
-
-  pipeline {
-    sql "list" {
-      connection = connection.sqlite.main
-      query      = "SELECT id, title, completed, created_at FROM todos ORDER BY id DESC"
-    }
-
-    respond {
-      status = 200
-      body   = steps.list.rows
-    }
-  }
-}
-
-endpoint "POST /api/v1/todos" {
-  description = "Creates a new todo item."
+route "POST /api/v1/todos" {
+  summary = "Create a new todo item"
+  tag     = "todos"
 
   request {
-    body = schema.todo_create
+    body = schema.TodoCreate
   }
 
-  pipeline {
-    starlark "trim_input" {
-      source = <<-STARLARK
-        def execute(ctx):
-          return {
-            "title": ctx.request.body.get("title", "").strip()
-          }
-      STARLARK
-    }
-
-    sql "insert" {
-      connection = connection.sqlite.main
-      query      = <<-SQL
-        INSERT INTO todos (title)
-        VALUES (@title)
-        RETURNING id, title, completed, created_at
-      SQL
-
-      args = {
-        title = steps.trim_input.result.title
-      }
-    }
-
-    respond {
-      status = 201
-      body   = steps.insert.row
-    }
+  step "starlark" "sanitize" {
+    source = <<-STARLARK
+      def execute(ctx):
+        body = ctx["request"]["body"] or {}
+        return {
+            "title": body.get("title", "").strip()
+        }
+    STARLARK
   }
-}
 
-endpoint "GET /api/v1/todos/{id}" {
-  description = "Fetches a single todo by ID."
-
-  request {
-    path {
-      field "id" {
-        type     = int
-        required = true
-      }
+  step "sql" "insert" {
+    connection = "main"
+    query      = <<-SQL
+      INSERT INTO todos (title)
+      VALUES (@title)
+      RETURNING id, title, completed, created_at
+    SQL
+    args = {
+      title = steps.sanitize.result.title
+    }
+    catch "19" {
+      status = 409
+      body   = problem(409, "A todo item with this title already exists")
     }
   }
 
-  pipeline {
-    sql "fetch" {
-      connection = connection.sqlite.main
-      query      = "SELECT id, title, completed, created_at FROM todos WHERE id = @id"
-      args       = { id = ctx.request.path.id }
-    }
-
-    respond {
-      condition = steps.fetch.rows_affected == 0
-      status    = 404
-      body      = problem(404, "Todo with ID ${ctx.request.path.id} not found")
-    }
-
-    respond {
-      status = 200
-      body   = steps.fetch.row
-    }
+  step "respond" {
+    status = 201
+    schema = schema.Todo
+    body   = steps.insert.row
   }
 }
 
-endpoint "PUT /api/v1/todos/{id}" {
-  description = "Updates an existing todo."
+route "GET /api/v1/todos/{id}" {
+  summary = "Fetch a single todo by ID"
+  tag     = "todos"
 
   request {
-    path {
-      field "id" {
-        type     = int
-        required = true
-      }
+    path "id" {
+      type     = "integer"
+      required = true
     }
-
-    body = schema.todo_update
   }
 
-  pipeline {
-    sql "update" {
-      connection = connection.sqlite.main
-      query      = <<-SQL
-        UPDATE todos
-        SET
-          title = COALESCE(@title, title),
-          completed = COALESCE(@completed, completed)
-        WHERE id = @id
-        RETURNING id, title, completed, created_at
-      SQL
-
-      args = {
-        id        = ctx.request.path.id
-        title     = ctx.request.body.title
-        completed = ctx.request.body.completed
-      }
+  step "sql" "fetch" {
+    connection = "main"
+    query      = "SELECT id, title, completed, created_at FROM todos WHERE id = @id"
+    args = {
+      id = ctx.request.path.id
     }
+  }
 
-    respond {
-      condition = steps.update.rows_affected == 0
-      status    = 404
-      body      = problem(404, "Todo with ID ${ctx.request.path.id} not found")
-    }
+  step "respond" {
+    when   = steps.fetch.rows_affected == 0
+    status = 404
+    body   = problem(404, "Todo item not found")
+  }
 
-    respond {
-      status = 200
-      body   = steps.update.row
-    }
+  step "respond" {
+    status = 200
+    schema = schema.Todo
+    body   = steps.fetch.row
   }
 }
 
-endpoint "DELETE /api/v1/todos/{id}" {
-  description = "Deletes a todo item."
+route "PUT /api/v1/todos/{id}" {
+  summary = "Update an existing todo item"
+  tag     = "todos"
 
   request {
-    path {
-      field "id" {
-        type     = int
-        required = true
-      }
+    path "id" {
+      type     = "integer"
+      required = true
+    }
+    body = schema.TodoUpdate
+  }
+
+  step "sql" "update" {
+    connection = "main"
+    query      = <<-SQL
+      UPDATE todos
+      SET
+        title = COALESCE(@title, title),
+        completed = COALESCE(@completed, completed)
+      WHERE id = @id
+      RETURNING id, title, completed, created_at
+    SQL
+    args = {
+      id        = ctx.request.path.id
+      title     = ctx.request.body.title
+      completed = ctx.request.body.completed
     }
   }
 
-  pipeline {
-    sql "delete" {
-      connection = connection.sqlite.main
-      query      = "DELETE FROM todos WHERE id = @id"
-      args       = { id = ctx.request.path.id }
-    }
+  step "respond" {
+    when   = steps.update.rows_affected == 0
+    status = 404
+    body   = problem(404, "Todo item not found")
+  }
 
-    respond {
-      condition = steps.delete.rows_affected == 0
-      status    = 404
-      body      = problem(404, "Todo with ID ${ctx.request.path.id} not found")
-    }
+  step "respond" {
+    status = 200
+    schema = schema.Todo
+    body   = steps.update.row
+  }
+}
 
-    respond {
-      status = 204
+route "DELETE /api/v1/todos/{id}" {
+  summary = "Delete a todo item"
+  tag     = "todos"
+
+  request {
+    path "id" {
+      type     = "integer"
+      required = true
     }
+  }
+
+  step "sql" "delete" {
+    connection = "main"
+    query      = "DELETE FROM todos WHERE id = @id"
+    args = {
+      id = ctx.request.path.id
+    }
+  }
+
+  step "respond" {
+    when   = steps.delete.rows_affected == 0
+    status = 404
+    body   = problem(404, "Todo item not found")
+  }
+
+  step "respond" {
+    status = 204
   }
 }

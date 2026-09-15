@@ -1,34 +1,56 @@
 ---
 title: Pipelines and steps
-description: The ordered step model inside endpoints, including execution rules, outputs, and failure behavior.
+description: Step sequencing, conditional branching, and early termination.
 ---
 
-A pipeline is an ordered sequence of steps declared inside an `endpoint` block. Each step performs one unit of work and writes its result into the execution context for subsequent steps to read.
+# Pipelines and steps
 
-| Step                                  | Function                                     | Exported outputs               |
-| :------------------------------------ | :------------------------------------------- | :----------------------------- |
-| [`sql`](../steps/sql)                 | Parameterized database queries and mutations | `rows`, `row`, `rows_affected` |
-| [`redis`](../steps/redis)             | Cache reads, writes, deletions, counters     | `value`                        |
-| [`starlark`](../steps/starlark)       | Sandboxed data transformation                | `result`                       |
-| [`go`](../steps/go)                   | Invokes a registered native Go function      | `result`                       |
-| [`transaction`](../steps/transaction) | Atomic multi-statement SQL execution         | Nested SQL outputs             |
-| [`parallel`](../steps/parallel)       | Concurrent branch execution                  | Nested branch outputs          |
-| [`respond`](../steps/respond)         | Terminates the pipeline                      | None                           |
+A pipeline is an ordered list of steps declared inside a `route` block. Each step runs a distinct task: querying a database, making an outbound HTTP request, reading from cache, transforming data with Starlark, running Go code, or streaming a response.
+
+```hcl
+route "GET /products/{id}" {
+  step "valkey" "cache" {
+    connection = "redis"
+    op         = "get"
+    key        = "product:${ctx.request.path.id}"
+  }
+
+  step "sql" "db" {
+    when       = !steps.cache.found
+    connection = "main"
+    query      = "SELECT id, title, price FROM products WHERE id = @id"
+    args       = { id = ctx.request.path.id }
+  }
+
+  respond {
+    when   = !steps.cache.found && steps.db.rows_affected == 0
+    status = 404
+    body   = problem(404, "Product not found")
+  }
+
+  respond {
+    status = 200
+    body   = steps.cache.found ? steps.cache.value : steps.db.row
+  }
+}
+```
 
 ## Step execution rules
 
-### Unique step labels
+1. **Exact lexical ordering**: Steps execute in the exact order they're declared in the manifest file.
+2. **Immutable prior history**: Steps can read outputs from earlier steps, but they can't mutate outputs produced by prior steps or change incoming request values.
+3. **Fail fast on error**: If a step encounters an unhandled error, pipeline execution stops right away and returns an HTTP 500 Problem Details response.
+4. **Early termination**: A `respond` step whose `when` condition evaluates to `true` (or one without a condition) terminates the pipeline immediately. Subsequent steps won't run.
 
-Every step except `respond` and `parallel` requires a unique name. The label defines the namespace under `steps.<name>`.
+## Supported step types
 
-### Read-only context history
-
-A step may read outputs written by prior steps, but cannot modify prior outputs or mutate `ctx.request`.
-
-### Fail-fast errors
-
-An unhandled error in any step immediately halts the pipeline and triggers the error handler.
-
-### Early termination
-
-Execution stops at the first `respond` whose condition evaluates to `true`, or at the first unconditional `respond`.
+| Step type                          | Purpose                                  | Exported outputs               |
+| :--------------------------------- | :--------------------------------------- | :----------------------------- |
+| [`sql`](/docs/steps/sql)           | Run prepared database statements         | `row`, `rows`, `rows_affected` |
+| [`http`](/docs/steps/http)         | Make outbound HTTP requests              | `status`, `body`               |
+| [`valkey`](/docs/steps/valkey)     | Key-value caching operations             | `found`, `value`, `success`    |
+| [`starlark`](/docs/steps/starlark) | Run sandboxed Python-like scripts        | `result`                       |
+| [`go`](/docs/steps/go)             | Invoke native Go handlers                | `result`                       |
+| [`respond`](/docs/steps/respond)   | Terminate and stream HTTP response       | None, terminates execution     |
+| [`docs`](/docs/steps/docs)         | Render interactive documentation portals | None, terminates execution     |
+| [`spec`](/docs/steps/spec)         | Serve OpenAPI 3.1 specifications         | None, terminates execution     |

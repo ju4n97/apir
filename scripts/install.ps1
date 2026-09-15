@@ -1,15 +1,15 @@
 $ErrorActionPreference = 'Stop'
-$Repo = "ju4n97/hclapi"
-$InstallDir = "$env:LOCALAPPDATA\Programs\hclapi"
+$Repo = "ju4n97/esquema"
+$InstallDir = "$env:LOCALAPPDATA\Programs\esquema"
 
 $Arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "arm64" }
 $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest"
 $Tag = $Release.tag_name
 $TagNoV = $Tag.TrimStart('v')
-$FileName = "hclapi_${TagNoV}_windows_${Arch}.zip"
+$FileName = "esquema_${TagNoV}_windows_${Arch}.zip"
 $DownloadUrl = "https://github.com/$Repo/releases/download/$Tag/$FileName"
 
-Write-Host "Downloading hclapi $Tag for windows/$Arch..."
+Write-Host "Downloading esquema $Tag for windows/$Arch..."
 $ZipPath = "$env:TEMP\$FileName"
 Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath
 
@@ -23,4 +23,4 @@ if ($UserPath -notlike "*$InstallDir*") {
     $env:Path += ";$InstallDir"
 }
 
-Write-Host "hclapi was installed successfully to $InstallDir\hclapi.exe"
+Write-Host "esquema was installed successfully to $InstallDir\esquema.exe"

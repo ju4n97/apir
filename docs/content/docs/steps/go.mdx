@@ -1,51 +1,65 @@
 ---
 title: go
-description: Invoke a native Go function registered on the hclapi engine.
+description: Invoke registered native Go callback functions with boundary panic recovery.
 ---
 
-Invokes a native Go function registered on the engine. Use this step for logic that cannot be expressed in Starlark or SQL: proprietary business rules, third-party SDKs, outbound HTTP clients, or hardware cryptography.
+# go
 
-## Declaration
+The `go` step calls a custom Go function registered on the engine. Use it when you need capabilities outside SQL and Starlark, such as calling custom SDKs or executing proprietary algorithms.
 
 ```hcl
-go "<name>" {
-  use  = "<registered_function_name>"
+step "go" "compute_tax" {
+  use = "tax.calculate"
   args = {
-    city = ctx.request.path.city
+    amount   = ctx.request.body.amount
+    country  = ctx.request.headers.cf_ipcountry
+    subtotal = steps.cart.result.total
   }
 }
 ```
 
-## Attributes
+## Handler signature
 
-| Attribute | Type     | Required | Description                                 |
-| :-------- | :------- | :------- | :------------------------------------------ |
-| `label`   | `string` | yes      | Step identifier; written to `steps.<name>`  |
-| `use`     | `string` | yes      | Function name registered on the `Engine`    |
-| `args`    | `map`    | no       | Evaluated arguments passed into `step.Args` |
-
-## Registration in Go
+Register handlers using the `esquema.WithStep` option when initializing the engine:
 
 ```go
-engine.RegisterStep("services.weather_lookup", func(ctx context.Context, step *hclapi.Step) (any, error) {
-    city := step.Args.GetOr("city", "")
-    if city == "" {
-        return nil, errors.New("missing or empty 'city' argument")
-    }
-
-    // Access incoming request headers safely
-    authHeader := step.Request.Header("Authorization")
-
-    return map[string]any{
-        "city":          strings.ToLower(strings.TrimSpace(city)),
-        "temperature_c": 22.5,
-        "condition":     "Sunny",
-    }, nil
-})
+func(ctx context.Context, step *esquema.Step) (any, error)
 ```
 
-The return value is exported under `steps.<name>.result`.
+The `*esquema.Step` struct exposes:
 
-:::warning Panic handling
-Panics in a registered function are automatically recovered by the engine, converted to an RFC 9457 500 error response, and don't terminate the server process.
-:::
+```go
+type Step struct {
+    Name    string
+    Args    Args
+    Request *http.Request
+}
+```
+
+## Working with arguments
+
+`step.Args` provides typed helpers with automatic coercion:
+
+```go
+func calculateTax(ctx context.Context, step *esquema.Step) (any, error) {
+    // Typed extraction with fallback
+    amount := step.Args.GetOr("amount", 0.0)
+    country := step.Args.GetOr("country", "CO")
+
+    // Bind all arguments into a struct in one line
+    var params TaxParams
+    if err := step.Args.Bind(&params); err != nil {
+        return nil, err
+    }
+
+    return map[string]any{"tax": amount * 0.20}, nil
+}
+```
+
+## Fault isolation
+
+Panics inside Go steps are caught by an internal boundary guard:
+
+- The panic stacktrace is logged through `slog` with the request `trace_id` attached.
+- The step's OpenTelemetry span is marked as an error.
+- The client receives a clean RFC 9457 HTTP 500 Problem Details response without crashing the server.

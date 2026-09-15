@@ -3,69 +3,84 @@ server {
   port = 8080
 }
 
-endpoint "GET /openapi.json" {
-  openapi "spec" {
+telemetry {
+  service_name = "zero-dependency-api"
+  logging {
+    level  = "info"
+    format = "text"
+  }
+}
+
+route "GET /openapi.json" {
+  step "spec" {
     format = "json"
   }
 }
 
-endpoint "GET /docs" {
-  description = "Interactive API reference."
-
-  openapi "ui" {
+route "GET /docs" {
+  step "docs" {
     renderer = "scalar"
   }
 }
 
-endpoint "GET /api/v1/health" {
-  description = "Returns server telemetry and current epoch timestamp."
+route "GET /api/v1/health" {
+  summary = "System health check"
+  tag     = "system"
 
-  pipeline {
-    starlark "sysinfo" {
-      source = <<-STARLARK
-        def execute(ctx):
+  step "starlark" "sysinfo" {
+    source = <<-STARLARK
+      def execute(ctx):
           return {
-            "status": "healthy",
-            "engine": "hclapi",
-            "timestamp": ctx.timestamp_epoch
+              "status": "healthy",
+              "engine": "esquema",
+              "timestamp": ctx["timestamp"],
           }
-      STARLARK
-    }
+    STARLARK
+  }
 
-    respond {
-      status = 200
-      body   = steps.sysinfo.result
-    }
+  step "respond" {
+    status = 200
+    body   = steps.sysinfo.result
   }
 }
 
-endpoint "POST /api/v1/sanitize" {
-  description = "Demonstrates string trimming and list deduplication in Starlark."
+route "POST /api/v1/sanitize" {
+  summary = "String normalization and list deduplication"
+  tag     = "utilities"
 
-  pipeline {
-    starlark "format_tags" {
-      source = <<-STARLARK
-        def execute(ctx):
-          body = ctx.request.body or {}
+  request {
+    body {
+      field "prefix" {
+        type    = "string"
+        default = "tag"
+      }
+      field "tags" {
+        type     = "array"
+        required = true
+      }
+    }
+  }
+
+  step "starlark" "format_tags" {
+    source = <<-STARLARK
+      def execute(ctx):
+          body = ctx["request"]["body"] or {}
           prefix = body.get("prefix", "tag")
           raw_tags = body.get("tags", [])
-
           cleaned = list(set([
-            prefix + ":" + t.strip().lower()
-            for t in raw_tags
-            if len(t.strip()) > 0
+              prefix + ":" + t.strip().lower()
+              for t in raw_tags
+              if len(t.strip()) > 0
           ]))
-
           return {
-            "count": len(cleaned),
-            "tags": cleaned
+              "count": len(cleaned),
+              "tags": cleaned,
           }
-      STARLARK
-    }
+    STARLARK
+  }
 
-    respond {
-      status = 200
-      body   = steps.format_tags.result
-    }
+  step "respond" {
+    status = 200
+    body   = steps.format_tags.result
   }
 }

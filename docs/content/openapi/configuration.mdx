@@ -1,50 +1,69 @@
+---
+title: OpenAPI configuration
+description: Exposing raw specification endpoints and exporting documents with the CLI.
+---
+
 # OpenAPI configuration
 
-Configuring OpenAPI in hclapi is split into two concerns:
+Configuring OpenAPI involves two parts:
 
-1. **Global specification metadata**: Declared inside `openapi {}` to configure document headers, contact info, licenses, tags, and deployment servers.
-2. **Endpoint handlers**: Declared inside `endpoint "GET /path"` using `openapi "<mode>"` to serve raw specifications or interactive UIs.
+1. **Global metadata**: Declared inside the root `openapi` block to set document titles, servers, and tags.
+2. **Specification routes**: Declared using the `spec` step to serve JSON or YAML documents.
 
-## Global specification metadata (`openapi {}`)
+## Serving raw specifications
 
-Declared as a top-level block to configure the global document header:
+Mount endpoints using the `spec` step:
+
+```hcl
+route "GET /openapi.json" {
+  spec {
+    format = "json"
+  }
+}
+
+route "GET /openapi.yaml" {
+  spec {
+    format = "yaml"
+  }
+}
+```
+
+### Attributes
+
+| Attribute | Type     | Default  | Allowed values     | Description                   |
+| :-------- | :------- | :------- | :----------------- | :---------------------------- |
+| `format`  | `string` | `"json"` | `"json"`, `"yaml"` | Output serialization encoding |
+
+## ETag caching
+
+Specifications are compiled once at boot time and hashed with SHA-256.
+
+Incoming requests containing a matching `If-None-Match` header receive an instant `304 Not Modified` response. The engine won't re-serialize or re-transmit the document when the client's cache is already fresh.
+
+## Global metadata declaration
+
+Declare the `openapi` block at the root of your manifest:
 
 ```hcl
 openapi {
-  title   = "Acme Storefront API"
-  version = "1.2.0"
+  title       = "Storefront API"
+  version     = "1.2.0"
+  description = "Customer account and order management services"
 
-  description = <<-MARKDOWN
-    ## Overview
-    Customer account and checkout management services.
-  MARKDOWN
+  server {
+    url         = "https://api.example.com/v1"
+    description = "Production cluster"
+  }
 
-  servers = [
-    {
-      url         = "https://api.example.com/v1"
-      description = "Production cluster"
-    },
-    {
-      url         = "http://localhost:8080"
-      description = "Local development server"
-    }
-  ]
-
-  tags = [
-    {
-      name        = "users"
-      description = "Customer accounts and profiles"
-    },
-    {
-      name        = "orders"
-      description = "Cart mutations and order placement"
-    }
-  ]
+  tag {
+    name        = "users"
+    description = "Customer accounts and profiles"
+  }
 
   contact {
-    name  = "API Engineering"
+    name  = "API Support"
     email = "support@example.com"
-    url   = "https://example.com/developers"
+    url   = "https://example.com/support"
   }
 
   license {
@@ -54,95 +73,19 @@ openapi {
 }
 ```
 
-### Global metadata attributes
+If you don't define a `server` block, esquema defaults to `url = "/"`. This keeps the API origin relative so browser portals work without CORS issues.
 
-| Attribute     | Type           | Default               | Description                                                  |
-| :------------ | :------------- | :-------------------- | :----------------------------------------------------------- |
-| `title`       | `string`       | `"API Documentation"` | Document title in `info.title`                               |
-| `version`     | `string`       | `"1.0.0"`             | Semantic version string in `info.version`                    |
-| `description` | `string`       | `""`                  | Markdown description in `info.description`                   |
-| `servers`     | `list(object)` | `[]`                  | Deployment targets (`url`, `description`)                    |
-| `tags`        | `list(object)` | `[]`                  | Category tags for operation grouping (`name`, `description`) |
-| `contact`     | `block`        | `null`                | Contact block containing `name`, `email`, `url`              |
-| `license`     | `block`        | `null`                | License block containing `name`, `url`                       |
+## Exporting with the CLI
 
-## Endpoint handlers (`openapi "<mode>"`)
+You can export the compiled specification directly to a file or standard output without starting the server:
 
-OpenAPI handlers are mounted to endpoints using labeled blocks representing mutually exclusive operational modes:
+```bash
+# Print JSON to stdout
+esquema openapi -c .
 
-### 1. `openapi "spec"`
+# Save JSON specification to file
+esquema openapi -c . -o openapi.json
 
-Serializes the compiled AST into a machine-readable document.
-
-```hcl
-endpoint "GET /openapi.json" {
-  openapi "spec" {
-    format = "json"
-  }
-}
-
-endpoint "GET /openapi.yaml" {
-  openapi "spec" {
-    format = "yaml"
-  }
-}
+# Save YAML specification to file
+esquema openapi -c . -f yaml -o openapi.yaml
 ```
-
-| Attribute | Type     | Default  | Allowed values     | Description                                 |
-| :-------- | :------- | :------- | :----------------- | :------------------------------------------ |
-| `format`  | `string` | `"json"` | `"json"`, `"yaml"` | Output serialization format of the document |
-
-### 2. `openapi "ui"`
-
-Renders a pre-compiled, embedded interactive reference viewer. Assets (CSS/JS) are embedded inside the hclapi binary with zero external CDN dependencies.
-
-```hcl
-endpoint "GET /docs" {
-  description = "Public developer documentation"
-
-  openapi "ui" {
-    renderer = "scalar"
-    spec_url = "/openapi.json"
-  }
-}
-```
-
-| Attribute  | Type     | Default        | Description                                                          |
-| :--------- | :------- | :------------- | :------------------------------------------------------------------- |
-| `renderer` | `string` | `"scalar"`     | Built-in UI engine: `"scalar"`, `"elements"`, `"swagger"`, `"redoc"` |
-| `spec_url` | `string` | `auto-derived` | Route path to the specification file to load                         |
-
-### 3. `openapi "template"`
-
-Renders a user-supplied HTML template populated with manifest metadata and specification coordinates.
-
-```hcl
-# External template file
-endpoint "GET /portal" {
-  openapi "template" {
-    file     = "./custom-portal.html"
-    spec_url = "/openapi.json"
-  }
-}
-
-# Inline template string
-endpoint "GET /docs" {
-  openapi "template" {
-    inline = <<-HTML
-      <!DOCTYPE html>
-      <html>
-        <head><title>{{ .Title }}</title></head>
-        <body><div id="scalar" data-spec-url="{{ .SpecURL }}"></div></body>
-      </html>
-    HTML
-  }
-}
-```
-
-| Attribute  | Type     | Required | Description                                                                                        |
-| :--------- | :------- | :------- | :------------------------------------------------------------------------------------------------- |
-| `file`     | `string` | one of   | Path to HTML template file, resolved relative to the directory of the manifest file where declared |
-| `inline`   | `string` | one of   | Inline template string (heredoc)                                                                   |
-| `spec_url` | `string` | no       | Route path passed into `.SpecURL` (auto-derived if omitted)                                        |
-
-_Exactly one of `file` or `inline` must be provided. Setting both or neither fails boot validation._

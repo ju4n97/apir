@@ -1,252 +1,225 @@
 ---
 title: Go integration
-description: Embed hclapi into an existing Go application, register native steps, configure the engine, and customize error handling.
+description: Embed esquema as an HTTP handler in your Go service and register native pipeline handlers.
 ---
 
 # Go integration
 
-hclapi embeds into an existing Go application as a library. It mounts native HTTP handlers alongside declarative routes and supports calling back into native Go functions from pipeline steps.
+You can embed esquema directly into an existing Go application as a standard library. It mounts on any standard `http.ServeMux`, reuses managed connection pools, and lets you call Go code from your HCL routes.
 
-## Embedding
+## Installation
 
-`hclapi.Engine` implements the standard `http.Handler` interface. It mounts directly onto any `http.ServeMux`, middleware stack, or third-party router.
+Add the module to your `go.mod`:
 
-### Basic setup
+```bash
+go get github.com/ju4n97/esquema
+```
+
+## Embedding in an existing Go service
+
+`*esquema.Engine` implements Go's standard `http.Handler` interface, so you can pass it straight to `http.ListenAndServe` or mount it under an existing router:
 
 ```go
 package main
 
 import (
-    "context"
-    "errors"
-    "log/slog"
-    "net/http"
-    "os"
-    "os/signal"
-    "syscall"
-    "time"
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-    "github.com/ju4n97/hclapi"
+	"github.com/ju4n97/esquema"
 )
 
 func main() {
-    logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	// 1. Load and compile manifests
+	cfg, err := esquema.Load("./routes/**/*.hcl")
+	if err != nil {
+		log.Fatalf("failed to compile manifests: %v", err)
+	}
 
-    engine, err := hclapi.New(hclapi.Options{
-        ConfigPath:   "./manifests",
-        StrictTyping: true,
-        Logger:       logger,
-    })
-    if err != nil {
-        logger.Error("failed to initialize hclapi engine", "error", err)
-        os.Exit(1)
-    }
+	// 2. Initialize engine with custom step handlers
+	app, err := esquema.New(cfg,
+		esquema.WithStep("payments.charge", handlePayment),
+	)
+	if err != nil {
+		log.Fatalf("failed to initialize esquema: %v", err)
+	}
+	defer app.Close()
 
-    mux := http.NewServeMux()
+	// 3. Mount onto a standard Go HTTP server
+	srv := &http.Server{
+		Addr:         ":8080",
+		Handler:      app,
+		ReadTimeout:  cfg.Server.ReadTimeout.Duration(),
+		WriteTimeout: cfg.Server.WriteTimeout.Duration(),
+	}
 
-    // Native custom endpoint
-    mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-        w.WriteHeader(http.StatusOK)
-        w.Write([]byte("OK"))
-    })
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-    // Mount hclapi router
-    mux.Handle("/", engine.Handler())
+	go func() {
+		log.Println("server listening on :8080")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server crash: %v", err)
+		}
+	}()
 
-    serverConfig := engine.Server()
-    server := &http.Server{
-        Addr:         ":8080",
-        Handler:      mux,
-        ReadTimeout:  serverConfig.ReadTimeout.Duration(),
-        WriteTimeout: serverConfig.WriteTimeout.Duration(),
-        IdleTimeout:  serverConfig.IdleTimeout.Duration(),
-    }
+	<-stop
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
+}
 
-    stop := make(chan os.Signal, 1)
-    signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
-    go func() {
-        logger.Info("server listening", "addr", server.Addr)
-        if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-            logger.Error("server error", "error", err)
-            os.Exit(1)
-        }
-    }()
-
-    <-stop
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-    server.Shutdown(ctx)
+func handlePayment(ctx context.Context, step *esquema.Step) (any, error) {
+	amount := step.Args.GetOr("amount", 0)
+	return map[string]any{"charged": amount, "status": "success"}, nil
 }
 ```
 
-## Registering steps
+## Registering custom step handlers
 
-Register a Go function that an HCL `go` step can invoke.
-
-### Signature
-
-```go
-type StepHandler func(ctx context.Context, step *hclapi.Step) (any, error)
-
-err := engine.RegisterStep("namespace.function_name", handler)
-```
-
-- `ctx`: Standard Go `context.Context` carrying request cancellation, timeouts, and tracing spans. Pass this directly to outbound HTTP requests, database queries, and cache calls.
-- `step`: The step execution handle carrying evaluated inputs (`step.Args`), request metadata (`step.Request`), and outputs of prior steps (`step.Steps`).
-
-## Step data access
-
-`*hclapi.Step` provides thread-safe access to execution data:
-
-| Field / Method                 | Type / Return          | Description                                                          |
-| :----------------------------- | :--------------------- | :------------------------------------------------------------------- |
-| `ctx`                          | `context.Context`      | Cancellation context passed directly into standard library IO calls  |
-| `step.Args`                    | `hclapi.Args`          | Evaluated arguments defined in the manifest `args = { ... }` block   |
-| `step.Request`                 | `*hclapi.RequestState` | Ingress HTTP metadata (`Method`, `Path`, `Query`, `Headers`, `Body`) |
-| `step.Request.Header(key)`     | `string`               | Case-insensitive header lookup                                       |
-| `step.Request.PathParam(key)`  | `string`               | Route path parameter lookup                                          |
-| `step.Request.QueryParam(key)` | `string`               | Query string parameter lookup with optional fallback                 |
-| `step.GetStepResult(name)`     | `(StepResult, bool)`   | Safely retrieve outputs from a prior pipeline step                   |
-| `step.TimestampEpoch`          | `int64`                | Ingress Unix epoch timestamp                                         |
-| `step.RawRequest`              | `*http.Request`        | The underlying Go standard library request                           |
-
-## Working with arguments (`step.Args`)
-
-`step.Args` uses generic methods for type coercion, handling HCL integers (`int64`), floating-point values, and dynamic lists:
-
-```go
-
-// Explicit typed extraction (returns zero value and false if missing or invalid)
-latitude, ok := step.Args.Get[float64]("latitude")
-if !ok {
-    return nil, errors.New("missing or invalid 'latitude' argument")
-}
-
-// Generic type inference with defaults
-port := step.Args.GetOr("port", 8080)          // Inferred as int
-host := step.Args.GetOr("host", "localhost")   // Inferred as string
-priority := step.Args.GetOr("priority", false) // Inferred as bool
-timeout := step.Args.GetOr("timeout_s", 2.5)   // Inferred as float64
-
-// Typed list extraction (safely coerces HCL dynamic []any slices)
-tags := step.Args.Slice[string]("tags")
-ids  := step.Args.Slice[int]("user_ids")
-
-// Struct binding (unmarshals arguments directly into a Go struct)
-var config ServiceConfig
-if err := step.Args.Bind(&config); err != nil {
-    return nil, fmt.Errorf("invalid arguments: %w", err)
-}
-```
-
-## Example: Outbound HTTP Call
-
-### 1. In your Go application:
-
-```go
-package main
-
-import (
-    "context"
-    "encoding/json"
-    "errors"
-    "fmt"
-    "net/http"
-    "time"
-
-    "github.com/ju4n97/hclapi"
-)
-
-type WeatherResponse struct {
-    Current struct {
-        Temperature float64 `json:"temperature_2m"`
-        Humidity    int     `json:"relative_humidity_2m"`
-    } `json:"current"`
-}
-
-var httpClient = &http.Client{Timeout: 5 * time.Second}
-
-func registerWeatherStep(engine *hclapi.Engine) error {
-    return engine.RegisterStep("services.fetch_weather", func(ctx context.Context, step *hclapi.Step) (any, error) {
-        // Read arguments using type-safe getters
-        lat, okLat := step.Args.Get[float64]("latitude")
-        lon, okLon := step.Args.Get[float64]("longitude")
-        if !okLat || !okLon {
-            return nil, errors.New("missing or invalid 'latitude' or 'longitude' arguments")
-        }
-
-        url := fmt.Sprintf(
-            "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,relative_humidity_2m",
-            lat, lon,
-        )
-
-        // Pass standard ctx directly to outgoing HTTP request for timeout/cancellation propagation
-        req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-        if err != nil {
-            return nil, fmt.Errorf("failed to create request: %w", err)
-        }
-
-        resp, err := httpClient.Do(req)
-        if err != nil {
-            return nil, fmt.Errorf("external weather API request failed: %w", err)
-        }
-        defer resp.Body.Close()
-
-        var data WeatherResponse
-        if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-            return nil, fmt.Errorf("failed to decode weather API response: %w", err)
-        }
-
-        // Return a map, struct, or primitive. The output is exported under steps.<name>.result (steps.weather.result in this example)
-        return map[string]any{
-            "temperature_c": data.Current.Temperature,
-            "humidity_pct":  data.Current.Humidity,
-            "fetched_at":    step.TimestampEpoch,
-        }, nil
-    })
-}
-```
-
-### 2. In your HCL manifest:
+In your HCL manifest, invoke the registered Go function by its key:
 
 ```hcl
-endpoint "GET /api/v1/locations/{city}/weather" {
-  pipeline {
-    sql "get_coords" {
-      connection = connection.postgres.main
-      query      = "SELECT latitude, longitude FROM locations WHERE city = @city"
-      args       = { city = ctx.request.path.city }
+route "POST /checkout" {
+  step "go" "process_charge" {
+    use = "payments.charge"
+    args = {
+      amount = ctx.request.body.amount
     }
+  }
 
-    respond {
-      condition = steps.get_coords.rows_affected == 0
-      status    = 404
-      body      = { error = "Location not found" }
-    }
-
-    go "weather" {
-      use = "services.fetch_weather"
-      args = {
-        latitude  = steps.get_coords.row.latitude
-        longitude = steps.get_coords.row.longitude
-      }
-    }
-
-    respond {
-      status = 200
-      body = {
-        city        = ctx.request.path.city
-        temperature = steps.weather.result.temperature_c
-        humidity    = steps.weather.result.humidity_pct
-      }
-    }
+  respond {
+    status = 200
+    body   = steps.process_charge.result
   }
 }
 ```
 
-## Error handling and custom status codes
+Go step handlers use this signature:
 
-- **Standard Go errors:** Returning a standard Go error (e.g. `errors.New("db failure")`) automatically returns an HTTP 500 with problem type `urn:hclapi:error:pipeline-execution-failed`.
-- **Custom HTTP status codes:** Return `step.Problem(status, detail)` or a `hclapi.Problem` struct to emit custom status codes (such as 401, 403, 404, or 429) directly to the client.
-- **Panics:** Any panic inside a `StepHandler` is automatically recovered by the runtime, logged with the step's name and stack trace, and returned as an HTTP 500. The server process continues running uninterrupted.
+```go
+func(ctx context.Context, step *esquema.Step) (any, error)
+```
+
+The `*esquema.Step` struct exposes:
+
+```go
+type Step struct {
+    Name    string        // Step name declared in manifest
+    Args    Args          // Evaluated arguments from HCL args map
+    Request *http.Request // Full incoming standard HTTP request
+}
+```
+
+## Argument extraction with step.Args
+
+`step.Args` gives you typed, panic-safe helpers with automatic coercion:
+
+```go
+func handlePayment(ctx context.Context, step *esquema.Step) (any, error) {
+    // 1. Direct typed fetch with success flag
+    currency, ok := step.Args.Get[string]("currency")
+    if !ok {
+        currency = "USD"
+    }
+
+    // 2. Safe extraction with typed fallback
+    amount := step.Args.GetOr("amount", int64(0))
+
+    // 3. Typed slice extraction
+    tags := step.Args.Slice[string]("tags")
+
+    // 4. Check presence
+    if step.Args.Has("metadata") {
+        // ...
+    }
+
+    return map[string]any{"id": "ch_123", "currency": currency, "amount": amount}, nil
+}
+```
+
+## Struct binding with step.Args.Bind
+
+If you've got multiple arguments, you don't need to extract them one by one. Bind the entire `args` map into a struct in one line:
+
+```go
+type ChargeParams struct {
+    Amount   int64  `json:"amount"`
+    Currency string `json:"currency"`
+    TenantID string `json:"tenant_id"`
+}
+
+func handlePayment(ctx context.Context, step *esquema.Step) (any, error) {
+    var params ChargeParams
+    if err := step.Args.Bind(&params); err != nil {
+        return nil, err
+    }
+
+    return map[string]any{"charged": params.Amount, "tenant": params.TenantID}, nil
+}
+```
+
+## Accessing raw HTTP request data
+
+You can inspect the untouched standard `*http.Request` via `step.Request`:
+
+```go
+func handleCustomAuth(ctx context.Context, step *esquema.Step) (any, error) {
+    // Read raw headers
+    authHeader := step.Request.Header.Get("Authorization")
+
+    // Read client remote IP address
+    clientIP := step.Request.RemoteAddr
+
+    // Access route parameters extracted by Go's ServeMux
+    accountID := step.Request.PathValue("id")
+
+    return map[string]any{
+        "authorized": authHeader != "",
+        "ip":         clientIP,
+        "account_id": accountID,
+    }, nil
+}
+```
+
+## Reusing database and cache pools
+
+If your Go handlers need direct database access, you don't need to open secondary connection pools. You can access the exact database and cache clients configured by esquema:
+
+```go
+// Direct SQL access via *sql.DB
+db, ok := app.SQL("main")
+if !ok {
+    log.Fatal("database 'main' not configured")
+}
+
+var email string
+err := db.QueryRowContext(ctx, "SELECT email FROM users WHERE id = $1", 42).Scan(&email)
+
+// Direct Valkey / Redis client access via valkey.Client
+cache, ok := app.Valkey("cache")
+if ok {
+    cmd := cache.B().Get().Key("session:user_42").Build()
+    val, _ := cache.Do(ctx, cmd).ToString()
+}
+```
+
+## Graceful shutdown
+
+Calling `app.Close()` cleanly shuts down all managed connection pools:
+
+- Waits for active database connections to idle before closing pools.
+- Closes all active Valkey clients.
+
+```go
+defer func() {
+    if err := app.Close(); err != nil {
+        log.Printf("error closing connection pools: %v", err)
+    }
+}()
+```

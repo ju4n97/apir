@@ -16,7 +16,7 @@ tasks:
       -X {{.MODULE}}/internal/version.version=dev
       -X {{.MODULE}}/internal/version.fullCommit=$(git rev-parse HEAD 2>/dev/null || echo none)
       -X {{.MODULE}}/internal/version.date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-      -o bin/hclapi ./cmd/hclapi
+      -o bin/esquema ./cmd/esquema
     vars:
       MODULE:
         sh: go list -m
@@ -49,7 +49,7 @@ tasks:
 
   test-integration:
     desc: Run integration tests against real services
-    cmd: go test -v -tags=integration -run="^TestIntegration" -timeout=5m ./...
+    cmd: CGO_ENABLED=1 go test -v -race -tags=integration ./test/integration/...
 
   lint:
     desc: Run linters
@@ -78,12 +78,12 @@ tasks:
   gen-docs:
     desc: Generate CLI markdown documentation
     cmds:
-      - go run -tags docs ./cmd/hclapi
+      - go run -tags docs ./cmd/esquema
       - bunx prettier@latest --write docs/content/cli
 
   gen-man:
     desc: Generate CLI man pages
-    cmd: go run -tags man ./cmd/hclapi
+    cmd: go run -tags man ./cmd/esquema
 
   docs-dev:
     desc: Start local documentation server

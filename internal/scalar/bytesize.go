@@ -5,12 +5,14 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"gopkg.in/yaml.v3"
 )
 
-// ByteSize represents a quantity of bytes that can be unmarshaled from text.
+// ByteSize represents a quantity of bytes that unmarshals from human-readable text.
 type ByteSize int64
 
-// ByteSize constants represent byte sizes.
+// ByteSize constants.
 const (
 	B   ByteSize = 1
 	KB  ByteSize = 1000 * B
@@ -23,12 +25,12 @@ const (
 	TiB ByteSize = 1024 * GiB
 )
 
-// Bytes returns the byte size as an integer.
+// Bytes returns the size in raw bytes as an int64.
 func (b ByteSize) Bytes() int64 {
 	return int64(b)
 }
 
-// String returns the byte size as a human-readable string.
+// String returns a human-readable representation of the byte size.
 func (b ByteSize) String() string {
 	switch {
 	case b >= GiB && b%GiB == 0:
@@ -48,14 +50,13 @@ func (b ByteSize) String() string {
 	}
 }
 
-// ParseByteSize parses human-readable byte strings into a ByteSize.
+// ParseByteSize parses a string containing byte quantities (e.g. "25MB", "1.5GiB", "1048576").
 func ParseByteSize(s string) (ByteSize, error) {
 	s = strings.TrimSpace(s)
-	if s == "" {
+	if s == "" || s == "0" {
 		return 0, nil
 	}
 
-	// Split numeric part and unit part
 	i := 0
 	for i < len(s) && (unicode.IsDigit(rune(s[i])) || s[i] == '.') {
 		i++
@@ -106,7 +107,6 @@ func (b *ByteSize) UnmarshalText(text []byte) error {
 	if err != nil {
 		return err
 	}
-
 	*b = parsed
 	return nil
 }
@@ -114,4 +114,9 @@ func (b *ByteSize) UnmarshalText(text []byte) error {
 // MarshalText implements encoding.TextMarshaler.
 func (b ByteSize) MarshalText() ([]byte, error) {
 	return []byte(b.String()), nil
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler.
+func (b *ByteSize) UnmarshalYAML(value *yaml.Node) error {
+	return b.UnmarshalText([]byte(value.Value))
 }

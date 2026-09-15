@@ -1,141 +1,55 @@
 ---
 title: connection
-description: Configure database and cache connections, pool capacity, lifecycle policies, and supported drivers.
+description: Relational database pools and Valkey cache instances.
 ---
 
-Declares access parameters, connection pool capacity, and lifecycle policies for a database or cache backend.
+# connection
 
-## Declaration
+The `connection` block declares external pools for relational databases and key-value stores.
 
-A `connection` block takes two labels: the canonical driver identifier and a unique connection identifier within that driver namespace.
+## SQL connections
+
+esquema uses four canonical SQL engine names:
 
 ```hcl
-connection "<driver>" "<name>" {
-  source = env("DATABASE_URL")
-
+connection "sql" "main" {
+  engine = "postgres"
+  source = "postgres://user:pass@localhost:5432/app?sslmode=disable"
   pool {
-    max_open     = 25
-    max_idle     = 5
-    max_lifetime = "30m"
-    idle_timeout = "5m"
+    max_open = 25
+    max_idle = 25
   }
 }
 ```
 
-Reference the connection across endpoints and pipelines as `connection.<driver>.<name>`.
+### Supported engines
 
-## Attributes
+| Engine          | Dialect placeholder | Default Go driver |
+| :-------------- | :-----------------: | :---------------- |
+| **`postgres`**  |      `$1, $2`       | `pgx`             |
+| **`mysql`**     |         `?`         | `mysql`           |
+| **`sqlite`**    |         `?`         | `sqlite`          |
+| **`sqlserver`** |     `@p1, @p2`      | `sqlserver`       |
 
-| Attribute    | Type     | Required | Description                                                                           |
-| :----------- | :------- | :------- | :------------------------------------------------------------------------------------ |
-| Driver label | `string` | yes      | Canonical driver identifier (e.g., `postgres`, `mysql`, `redis`)                      |
-| Name label   | `string` | yes      | Unique identifier within the driver namespace                                         |
-| `source`     | `string` | yes      | Connection URI, DSN, ADO string, or file path; supports dynamic `env(...)` resolution |
-| `pool`       | `block`  | no       | Connection-pool tuning parameters                                                     |
+Aliases like `postgresql`, `pgx`, `sqlite3`, `mariadb`, or `mssql` aren't allowed. esquema rejects non-canonical names during compilation so your manifests stay consistent across teams.
 
 ### Pool settings
 
-The `pool` block governs connection reuse and resource limits across database and cache backends:
+| Attribute  | Type  | Default | Description                                  |
+| :--------- | :---- | :------ | :------------------------------------------- |
+| `max_open` | `int` | `25`    | Maximum active open connections in the pool  |
+| `max_idle` | `int` | `25`    | Maximum idle connections waiting in the pool |
 
-| Attribute      | Type       | Default | Applicable To | Description                                                        |
-| :------------- | :--------- | :------ | :------------ | :----------------------------------------------------------------- |
-| `max_open`     | `int`      | `25`    | All drivers   | Maximum concurrent active connections or pool capacity             |
-| `max_idle`     | `int`      | `5`     | SQL           | Maximum dormant connections retained in the pool                   |
-| `max_lifetime` | `Duration` | `"30m"` | SQL           | Maximum duration a connection may be reused before retirement      |
-| `idle_timeout` | `Duration` | `"5m"`  | SQL, Redis    | Maximum duration an unused connection remains idle before eviction |
+Idle connections are closed after 5 minutes, and active connections are recycled after 15 minutes.
 
-## Supported drivers
-
-The `source` attribute accepts native URI schemes, driver DSNs, ADO.NET connection strings, or file paths:
-
-| Driver        | Category           | Typical formats and targets                                                                               |
-| :------------ | :----------------- | :-------------------------------------------------------------------------------------------------------- |
-| `postgres`    | Relational SQL     | `postgres://user:pass@host:5432/db?sslmode=disable`<br/>`host=localhost port=5432 dbname=mydb user=app`   |
-| `mysql`       | Relational SQL     | `mysql://user:pass@tcp(host:3306)/dbname?parseTime=true`<br/>`user:password@tcp(127.0.0.1:3306)/dbname`   |
-| `sqlserver`   | Relational SQL     | `sqlserver://user:pass@host:1433?database=app`<br/>`Server=host;Database=app;User Id=sa;Password=secret;` |
-| `sqlite`      | Embedded SQL       | `file:app.db?cache=shared&mode=rwc`<br/>`/var/data/app.db`<br/>`:memory:`                                 |
-| `redis`       | Key-Value / Cache  | `redis://:password@localhost:6379/0`<br/>`rediss://user:pass@cache.internal:6380/1` (TLS)                 |
-| `clickhouse`  | Columnar SQL       | `clickhouse://user:pass@host:9000/db`<br/>`https://user:pass@clickhouse.cloud:8443`                       |
-| `cockroachdb` | Distributed SQL    | `postgres://root@host:26257/defaultdb?sslmode=verify-full`                                                |
-| `oracle`      | Relational SQL     | `oracle://user:pass@host:1521/service_name`<br/>`user/password@//host:1521/XE`                            |
-| `duckdb`      | Embedded Analytics | `duckdb:///path/to/analytics.duckdb`<br/>`:memory:`                                                       |
-
-## Configuration examples
-
-### Relational SQL (Postgres & SQL Server)
+## Valkey and Redis connections
 
 ```hcl
-# PostgreSQL connection pool with read replica
-connection "postgres" "primary" {
-  source = env("DATABASE_PRIMARY_URL")
-
-  pool {
-    max_open     = 50
-    max_idle     = 10
-    max_lifetime = "1h"
-    idle_timeout = "10m"
-  }
-}
-
-connection "postgres" "replica" {
-  source = env("DATABASE_REPLICA_URL")
-
-  pool {
-    max_open = 100
-    max_idle = 20
-  }
-}
-
-# SQL Server using ADO.NET connection string
-connection "sqlserver" "legacy_erp" {
-  source = "Server=sql.internal,1433;Database=ERP;User Id=${env("ERP_USER")};Password=${env("ERP_PASS")};TrustServerCertificate=true;"
-
-  pool {
-    max_open = 20
-  }
+connection "valkey" "cache" {
+  url = "valkey://127.0.0.1:6379"
 }
 ```
 
-### Key-Value / Cache (Redis)
-
-```hcl
-connection "redis" "cache" {
-  source = env("REDIS_URL")
-
-  pool {
-    max_open     = 30
-    idle_timeout = "2m"
-  }
-}
-```
-
-## Reference in a pipeline
-
-Pipeline steps reference declared connections via `connection.<driver>.<name>`:
-
-```hcl
-endpoint "GET /api/v1/users/{id}" {
-  pipeline {
-    # Query SQL replica
-    sql "find_user" {
-      connection = connection.postgres.replica
-      query      = "SELECT id, name, email FROM users WHERE id = @id"
-      args       = { id = ctx.request.path.id }
-    }
-
-    # Store formatted result in Redis
-    redis "cache_user" {
-      connection = connection.redis.cache
-      command    = "SET"
-      key        = "user:${ctx.request.path.id}"
-      value      = json_encode(steps.find_user.row)
-      ttl        = "15m"
-    }
-
-    respond {
-      status = 200
-      body   = steps.find_user.row
-    }
-  }
-}
-```
+| Attribute | Type     | Required | Description                                           |
+| :-------- | :------- | :------: | :---------------------------------------------------- |
+| `url`     | `string` |   yes    | Connection URL using `redis://user:pass@host:port/db` |

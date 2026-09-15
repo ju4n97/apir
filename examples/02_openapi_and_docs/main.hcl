@@ -4,31 +4,23 @@ server {
 }
 
 openapi {
-  title   = "Acme Documentation Demo"
-  version = "1.0.0"
+  title       = "Acme Documentation Showcase"
+  version     = "1.0.0"
+  description = "Demonstration of multiple interactive documentation portals and raw OpenAPI 3.1 artifacts."
 
-  description = <<-MARKDOWN
-    ## Overview
-    Demonstrates multiple interactive documentation renderers and raw OpenAPI 3.1 specifications.
-  MARKDOWN
+  server {
+    url         = "/"
+    description = "Current server origin"
+  }
 
-  servers = [
-    {
-      url         = "http://localhost:8080"
-      description = "Local development server"
-    }
-  ]
-
-  tags = [
-    {
-      name        = "system"
-      description = "System health and status endpoints"
-    }
-  ]
+  tag {
+    name        = "system"
+    description = "Core runtime and health probes"
+  }
 
   contact {
-    name  = "API Support"
-    email = "support@example.com"
+    name  = "API Architecture Team"
+    email = "architecture@example.com"
     url   = "https://example.com/support"
   }
 
@@ -38,57 +30,68 @@ openapi {
   }
 }
 
-endpoint "GET /openapi.json" {
-  openapi "spec" {
+route "GET /openapi.json" {
+  step "spec" {
     format = "json"
   }
 }
 
-endpoint "GET /openapi.yaml" {
-  openapi "spec" {
+route "GET /openapi.yaml" {
+  step "spec" {
     format = "yaml"
   }
 }
 
-endpoint "GET /docs" {
-  description = "Scalar interactive documentation portal."
-
-  openapi "ui" {
+route "GET /docs" {
+  step "docs" {
     renderer = "scalar"
   }
 }
 
-endpoint "GET /docs/elements" {
-  description = "Stoplight Elements interactive documentation."
-
-  openapi "ui" {
-    renderer = "elements"
-  }
-}
-
-endpoint "GET /docs/swagger" {
-  description = "Swagger UI documentation."
-
-  openapi "ui" {
+route "GET /docs/swagger" {
+  step "docs" {
     renderer = "swagger"
   }
 }
 
-endpoint "GET /docs/redoc" {
-  description = "Redoc interactive documentation."
+route "GET /docs/elements" {
+  step "docs" {
+    renderer = "elements"
+  }
+}
 
-  openapi "ui" {
+route "GET /docs/redoc" {
+  step "docs" {
     renderer = "redoc"
   }
 }
 
-endpoint "GET /api/v1/ping" {
-  description = "Simple ping endpoint."
+route "GET /docs/custom" {
+  step "docs" {
+    template = <<HTML
+	<html>
+	<head>
+		<title>{{ .Title }}</title>
+	</head>
+	<body>
+		<h1>Custom Template</h1>
+		<p>
+			Source Specification:
+			<a href="{{ .SpecURL }}">{{ .SpecURL }}</a>
+		</p>
+	</body>
+	</html>
+	HTML
+  }
+}
+route "GET /api/v1/ping" {
+  summary = "Simple latency check"
+  tag     = "system"
 
-  pipeline {
-    respond {
-      status = 200
-      body   = { status = "pong" }
+  step "respond" {
+    status = 200
+    body = {
+      status = "pong"
     }
   }
 }

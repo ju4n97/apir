@@ -3,42 +3,39 @@ server {
   port = 8080
 }
 
-endpoint "GET /openapi.json" {
-  openapi "spec" {
-    format = "json"
-  }
-}
-
-endpoint "GET /docs" {
-  openapi "ui" {
+route "GET /docs" {
+  step "docs" {
     renderer = "elements"
   }
 }
 
-endpoint "GET /api/v1/weather/{city}" {
-  description = "Fetches live weather conditions via a native Go step handler."
+route "GET /openapi.json" {
+  step "spec" {
+    format = "json"
+  }
+}
+
+route "GET /api/v1/sky/mars-age/{earth_years}" {
+  summary = "Converts an age in Earth years to Mars years via Go callback"
+  tag     = "astronomy"
 
   request {
-    path {
-      field "city" {
-        type     = string
-        required = true
-      }
+    path "earth_years" {
+      type        = "number"
+      required    = true
+      description = "Age in Earth years"
     }
   }
 
-  pipeline {
-    go "fetch_weather" {
-      use = "services.get_weather"
-
-      args = {
-        city = ctx.request.path.city
-      }
+  step "go" "convert" {
+    use = "astronomy.mars_age"
+    args = {
+      earth_years = ctx.request.path.earth_years
     }
+  }
 
-    respond {
-      status = 200
-      body   = steps.fetch_weather.result
-    }
+  step "respond" {
+    status = 200
+    body   = steps.convert.result
   }
 }

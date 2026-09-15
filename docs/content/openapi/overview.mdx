@@ -1,102 +1,46 @@
+---
+title: OpenAPI overview
+description: How esquema compiles strict OpenAPI 3.1 specifications from your HCL manifests.
+---
+
 # OpenAPI overview
 
-hclapi statically analyzes your manifest Abstract Syntax Tree (AST) at boot time to compile a strict, 100% compliant **OpenAPI 3.1** specification.
+esquema inspects your manifests at boot to compile a strict **OpenAPI 3.1** specification.
 
-You don't need to maintain separate YAML files, code annotations, or run external generators. The HCL manifest is the single source of truth for your API contract.
+You don't need to maintain separate YAML files, write code annotations, or run external generators. Your HCL manifest is the single source of truth for both runtime execution and API documentation.
 
-Additionally, hclapi mounts zero hidden routes. If an OpenAPI specification file or interactive reference portal is served by your application, it must be explicitly declared as an `endpoint` using an `openapi` handler.
+There aren't any hidden routes. If a specification document or interactive viewer is exposed by your service, you declare it explicitly as a `route` block using a `spec` or `docs` step.
 
-## Derived elements
+## Specification mapping
 
-Because hclapi manifests are statically typed, the compiler maps every part of your manifest directly into the OpenAPI 3.1 document model:
+The compiler maps every manifest element directly into the OpenAPI 3.1 document tree:
 
-| Manifest construct                   | OpenAPI 3.1 mapping                                            |
-| :----------------------------------- | :------------------------------------------------------------- |
-| `endpoint "POST /api/v1/users/{id}"` | `paths["/api/v1/users/{id}"]["post"]`                          |
-| `description = "..."`                | `operation.description` and `operation.summary`                |
-| `{id}` and `{filepath...}`           | `parameters` with `in: path`, `required: true`                 |
-| `request.query` fields               | `parameters` with `in: query` (types, bounds, and defaults)    |
-| `request.headers` fields             | `parameters` with `in: header` (casing and format constraints) |
-| `request.body = schema.<name>`       | `requestBody.content["application/json"].schema`               |
-| `respond { schema = schema.<name> }` | `responses["200"].content["application/json"].schema` (`$ref`) |
-| `respond { schema = { ... } }`       | `responses["200"].content["application/json"].schema` (inline) |
-| `respond { body = { ... } }`         | Inferred `responses["200"].content["application/json"].schema` |
-| `respond { body = problem(...) }`    | `responses["4xx"].content["application/problem+json"].schema`  |
-| `catch "23505" { status = 409 }`     | `responses["409"].content["application/problem+json"].schema`  |
-| Schema validation engine             | `responses["422"].content["application/problem+json"].schema`  |
-| `server.max_body_size` enforcement   | `responses["413"].content["application/problem+json"].schema`  |
-| Uncaught pipeline failure            | `responses["500"].content["application/problem+json"].schema`  |
+| Manifest element                   | OpenAPI 3.1 mapping                                                 |
+| :--------------------------------- | :------------------------------------------------------------------ |
+| `route "POST /users/{id}"`         | `paths["/users/{id}"]["post"]`                                      |
+| `summary = "..."`                  | `operation.summary`                                                 |
+| `tag = "..."`                      | `operation.tags`                                                    |
+| `request.path` fields              | Path parameters (`in: path`, `required: true`)                      |
+| `request.query` fields             | Query parameters (`in: query`) with bounds and defaults             |
+| `request.headers` fields           | Header parameters (`in: header`) with formats                       |
+| `request.body = User`              | `requestBody.content["application/json"].schema` (`$ref`)           |
+| `respond { schema = "User" }`      | Response `$ref` under HTTP 200                                      |
+| `respond { schema = "[]User" }`    | Array response wrapping the target schema `$ref`                    |
+| `step "sql" { catch "23505" ... }` | HTTP 409 response pointing to `#/components/schemas/ProblemDetails` |
+| Schema validation rules            | Automatic HTTP 422 response pointing to `ProblemDetails`            |
+| `hidden = true`                    | Excluded completely from the specification catalog                  |
 
-:::info Catalog exclusion
-Endpoints configured with an `openapi` handler (`"spec"`, `"ui"`, or `"template"`) are automatically excluded from the compiled OpenAPI operations catalog (`paths`) to prevent polluting client SDKs.
-:::
+## Catalog exclusion
 
-## Explicit endpoint declaration
+Routes configured with a `docs` or `spec` step are automatically excluded from the generated operations catalog. This prevents internal documentation viewers from polluting client SDKs.
 
-You control the exact path and renderer for your specifications and documentation portals:
+## Client SDK generation
 
-```hcl
-# Public interactive documentation portal using Scalar
-endpoint "GET /docs" {
-  description = "Public interactive API documentation."
-  auth        = []
+Because esquema produces strict OpenAPI 3.1 documents, you can feed exported specifications directly into modern code generators:
 
-  openapi "ui" {
-    renderer = "scalar"
-  }
-}
-
-# Raw OpenAPI 3.1 JSON specification
-endpoint "GET /openapi.json" {
-  openapi "spec" {
-    format = "json"
-  }
-}
-
-# Raw OpenAPI 3.1 YAML specification
-endpoint "GET /openapi.yaml" {
-  openapi "spec" {
-    format = "yaml"
-  }
-}
-
-# Internal Swagger UI protected by Basic Auth
-endpoint "GET /admin/swagger" {
-  description = "Internal Swagger UI for engineering team."
-  auth        = [auth.basic.admin]
-
-  openapi "ui" {
-    renderer = "swagger"
-  }
-}
-```
-
-## Static CLI export
-
-You can export the compiled OpenAPI 3.1 document directly from your terminal or CI/CD pipeline without running an HTTP server:
-
-```sh
-# Export JSON to stdout
-hclapi openapi -c ./api
-
-# Export JSON to file
-hclapi openapi -c ./api -o ./openapi.json --pretty
-
-# Export YAML to stdout
-hclapi openapi -c ./api --format=yaml
-
-# Export YAML to file
-hclapi openapi -c ./api --format=yaml -o ./openapi.yaml
-```
-
-The exported document can be fed directly into client SDK generators.
-
-## SDK options
-
-| Languages                                    | Recommendation                                                                                                                                                         |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| TypeScript / JavaScript                      | [openapi-typescript](https://github.com/openapi-ts/openapi-typescript), [hey-api](https://github.com/hey-api/openapi-ts), [Orval](https://github.com/orval-labs/orval) |
-| Python, Go, Java, C# / .NET, PHP, Ruby, Rust | [OpenAPI Generator](https://github.com/OpenAPITools/openapi-generator)                                                                                                 |
-| Go                                           | [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen)                                                                                                           |
-| Python                                       | [datamodel-code-generator](https://github.com/koxudaxi/datamodel-code-generator)                                                                                       |
-| Rust                                         | [Progenitor](https://github.com/oxidecomputer/progenitor)                                                                                                              |
+| Language            | Recommended tools                                 |
+| :------------------ | :------------------------------------------------ |
+| **TypeScript / JS** | `openapi-typescript`, `hey-api`, or `orval`       |
+| **Python**          | `datamodel-code-generator` or `openapi-generator` |
+| **Go**              | `oapi-codegen`                                    |
+| **Rust**            | `progenitor`                                      |

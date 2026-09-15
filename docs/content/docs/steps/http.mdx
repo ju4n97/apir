@@ -1,0 +1,45 @@
+---
+title: http
+description: Outbound HTTP requests with dynamic URLs, deadlines, and trace propagation.
+---
+
+# http
+
+The `http` step makes outbound HTTP requests to external services.
+
+```hcl
+step "http" "fetch_pricing" {
+  method  = "POST"
+  url     = "https://pricing.service.internal/v1/quotes/${ctx.request.path.sku}"
+  timeout = "3s"
+  headers = {
+    "X-Tenant-ID"    = ctx.request.headers.x-tenant-id
+    "X-Service-Auth" = env.SERVICE_SECRET
+  }
+  body = {
+    quantity = ctx.request.body.quantity
+  }
+}
+```
+
+## Attributes
+
+| Attribute | Type       | Default  | Description                                                      |
+| :-------- | :--------- | :------- | :--------------------------------------------------------------- |
+| `url`     | `string`   | required | Target URL, supporting string interpolation via `${...}`         |
+| `method`  | `string`   | `"GET"`  | HTTP method (`GET`, `POST`, `PUT`, `DELETE`, etc.)               |
+| `timeout` | `Duration` | `"10s"`  | Outbound request deadline                                        |
+| `headers` | `map`      | `{}`     | Key-value pairs sent as HTTP request headers                     |
+| `body`    | `any`      | `null`   | Payload encoded as `application/json`                            |
+| `when`    | `bool`     | `true`   | Conditional expression; step is skipped if it evaluates to false |
+
+## Exported outputs
+
+| Field                 | Type  | Description                                 |
+| :-------------------- | :---- | :------------------------------------------ |
+| `steps.<name>.status` | `int` | Upstream HTTP response status code          |
+| `steps.<name>.body`   | `any` | Parsed JSON body, or raw string if non-JSON |
+
+## Distributed tracing
+
+Every outbound request automatically injects standard W3C `traceparent` headers into the request context. Your upstream services will continue the exact same trace waterfall in Tempo or Jaeger.

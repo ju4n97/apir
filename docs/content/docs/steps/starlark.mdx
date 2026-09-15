@@ -1,68 +1,41 @@
 ---
 title: starlark
-description: Execute sandboxed Starlark for data transformation, filtering, and business logic.
+description: Sandboxed Python-like scripts for data transformation.
 ---
 
-Executes sandboxed Starlark for data transformation, filtering, and business logic.
+# starlark
 
-## Declaration
+The `starlark` step runs data transformation logic inside an isolated, deterministic Starlark virtual machine. Scripts are precompiled once at boot time, so you won't pay parsing overhead on individual requests.
 
 ```hcl
-starlark "<name>" {
+step "starlark" "sanitize" {
   source = <<-STARLARK
     def execute(ctx):
-      return { "status": "processed" }
+      body = ctx["request"]["body"]
+      clean_email = body.get("email", "").strip().lower()
+      return {
+          "email": clean_email,
+          "domain": clean_email.split("@")[-1],
+      }
   STARLARK
 }
 ```
 
-The script must define `execute(ctx)`, returning a dict, list, or scalar. `ctx` mirrors the [execution context](../concepts/context), using dictionary access instead of dotted attributes.
-
 ## Attributes
 
-| Attribute | Type     | Required | Description                             |
-| :-------- | :------- | :------- | :-------------------------------------- |
-| `label`   | `string` | yes      | Step identifier                         |
-| `source`  | `string` | yes      | Starlark source defining `execute(ctx)` |
+| Attribute | Type     | Required | Description                                         |
+| :-------- | :------- | :------: | :-------------------------------------------------- |
+| `source`  | `string` |   yes    | Inline Starlark script defining `def execute(ctx):` |
+| `when`    | `bool`   |    no    | Conditional expression                              |
 
-## Example: defaults and lookups
+## Exported outputs
 
-```python
-def execute(ctx):
-  prefix = ctx.request.body.get("prefix", "default_prefix")
-  tags = ctx.request.body.get("tags", [])
-  user_id = ctx.request.body["user_id"]
+| Field                 | Type  | Description                      |
+| :-------------------- | :---- | :------------------------------- |
+| `steps.<name>.result` | `any` | Value returned by `execute(ctx)` |
 
-  return {"prefix": prefix, "total_tags": len(tags), "user_id": user_id}
-```
+## Sandboxing rules
 
-## Example: list comprehension
-
-```python
-def execute(ctx):
-  raw_tags = ctx.request.body.get("tags", [])
-  prefix = ctx.request.body.get("prefix", "tag")
-
-  cleaned = [prefix + ":" + t.strip().lower() for t in raw_tags if len(t.strip()) > 0]
-  return {"count": len(cleaned), "tags": cleaned}
-```
-
-## Example: reshape prior step results
-
-```python
-def execute(ctx):
-  account = ctx.steps.fetch_account
-  invoices = ctx.steps.fetch_invoices
-
-  total_spent = sum([inv["amount_cents"] for inv in invoices if inv["status"] == "paid"])
-
-  return {
-    "account_id": account["id"],
-    "name": account["name"].strip().title(),
-    "total_spent_cents": total_spent
-  }
-```
-
-:::note Sandboxing
-Starlark scripts have no filesystem or network access. Unbounded recursion and infinite loops are prevented by the runtime.
-:::
+1. **No host access**: Starlark can't touch the host filesystem, environment variables, or network sockets.
+2. **Instruction limit**: Execution is capped at 100,000 steps. Runaway loops or unbounded recursion halt immediately with an error rather than hanging your server.
+3. **Context access**: The `ctx` argument provides dictionary access to `ctx["request"]` and prior step outputs via `ctx["steps"]`.

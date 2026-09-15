@@ -1,36 +1,42 @@
 ---
-title: Why hclapi
-description: Where hclapi fits, what it provides, and where a general-purpose backend is a better fit.
+title: Why esquema
+description: Where esquema fits, what it provides, and where traditional frameworks are a better choice.
 ---
 
-hclapi is for building small HTTP APIs over existing databases without writing a separate backend for each one.
+# Why esquema
 
-An API is defined in a manifest, with queries and processing steps kept close to the endpoint that uses them. The result is a small service that is easy to read, change, and deploy.
+esquema is designed for creating HTTP APIs over databases and upstream services without writing boilerplate routing, connection pooling, validation models, or DTO mapping layers.
 
-hclapi is intentionally narrow. It works best when the API is mostly a thin layer over existing data.
+An API is defined in standard HashiCorp HCL manifests, keeping queries, input validation, and transformations close to the routes that use them.
 
 ## What it provides
 
-:::info Readable endpoints
-A manifest should be understandable without knowing a framework or data access layer.
+:::info Co-located logic
+Route definitions, SQL queries, input validation rules, and response shapes live together in clear HCL blocks rather than being scattered across routers, controllers, and ORM files.
 :::
 
-:::info Cheap changes
-Query and endpoint changes are file changes rather than application-code changes.
+:::info Zero-drift documentation
+OpenAPI 3.1 specifications are generated from the compiled manifest at boot time. Documentation and interactive UI portals (Scalar, Swagger, Redoc, Elements) are always in sync with your runtime constraints.
 :::
 
-:::info Safe defaults
-SQL parameters are bound instead of interpolated, and Starlark cannot access the filesystem or network.
+:::info Parameter safety
+SQL inputs are rewritten into prepared statement bind variables (`$1`, `?`, `@p1`) using single-pass lexical scanning. Query parameters cannot be injected, and string literals like `'admin@example.com'` remain untouched.
 :::
 
-:::info Small surface area
-The system stays simple enough to understand and maintain.
+:::info Sandboxed transformations
+Starlark scripts run in an isolated virtual machine without host filesystem or network access, capped at a strict 100,000 instruction budget to prevent runaway loops.
 :::
 
-## Where it does not fit
+:::info Observability out of the box
+Every route and step automatically emits OpenTelemetry spans and metrics, while structured `slog` output scrubs configured sensitive fields (like tokens or passwords) at emission time.
+:::
 
-hclapi does not replace a general-purpose backend framework. Use application code when the service needs substantial business logic, complex workflows, or long-running state. Schema management, identity and authentication, and running multiple services are also outside the scope of hclapi.
+## Where it doesn't fit
 
-A `go` step is available when logic cannot reasonably live in SQL or Starlark, but at that point hclapi is primarily providing the API layer around Go code.
+esquema is not an all-purpose web framework. Use traditional application code when your service requires:
 
-hclapi is best suited to small, data-oriented APIs where keeping the endpoint definition close to the query is more useful than introducing a larger application stack.
+- Background worker loops or message bus consumers (Kafka, RabbitMQ).
+- Long-lived stateful connections (WebSockets, gRPC bidirectional streams).
+- Complex multi-step database schema migrations (use dedicated tools like `flyway` or `golang-migrate`).
+
+A `step "go"` block is available when an endpoint requires third-party SDK calls or very customized logic.

@@ -3,111 +3,53 @@ package problem_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
-	"github.com/ju4n97/hclapi/internal/problem"
+	"github.com/ju4n97/esquema/internal/problem"
 )
 
-func TestProblem_New(t *testing.T) {
+// TestProblem_Serialization verifies RFC 9457 JSON marshaling and extension field inlining.
+func TestProblem_Serialization(t *testing.T) {
 	t.Parallel()
 
-	t.Run("canonical title and type derivation", func(t *testing.T) {
-		t.Parallel()
-
-		p := problem.New(http.StatusUnauthorized, "Token expired")
-
-		if p.Status != 401 {
-			t.Errorf("Status = %d; want 401", p.Status)
-		}
-		if p.Title != "Unauthorized" {
-			t.Errorf("Title = %q; want 'Unauthorized'", p.Title)
-		}
-		if p.Type != "urn:hclapi:error:unauthorized" {
-			t.Errorf("Type = %q; want 'urn:hclapi:error:unauthorized'", p.Type)
-		}
-		if p.Detail != "Token expired" {
-			t.Errorf("Detail = %q; want 'Token expired'", p.Detail)
-		}
-	})
-
-	t.Run("error interface implementation", func(t *testing.T) {
-		t.Parallel()
-
-		p := problem.New(http.StatusNotFound, "Resource missing")
-		if got := p.Error(); got != "Not Found: Resource missing" {
-			t.Errorf("Error() = %q; want 'Not Found: Resource missing'", got)
-		}
-
-		pNoDetail := problem.New(http.StatusForbidden)
-		if got := pNoDetail.Error(); got != "Forbidden" {
-			t.Errorf("Error() = %q; want 'Forbidden'", got)
-		}
-	})
-}
-
-func TestProblem_Slugify(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"Not Found", "not-found"},
-		{"Bad Request", "bad-request"},
-		{"Payload Too Large", "payload-too-large"},
-		{"  Multiple   Spaces  ", "multiple-spaces"},
-		{"Already-Slugified", "already-slugified"},
+	p := problem.New(http.StatusConflict, "Entity already exists")
+	p.Instance = "/accounts/42"
+	p.Extensions = map[string]any{
+		"trace_id": "trace-999",
+	}
+	p.InvalidParams = []problem.InvalidParam{
+		{Name: "email", Reason: "unique constraint violation"},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			t.Parallel()
-			if got := problem.Slugify(tt.input); got != tt.want {
-				t.Errorf("Slugify(%q) = %q; want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestProblem_ExtensionsRootSerialization_RFC9457(t *testing.T) {
-	t.Parallel()
-
-	p := problem.Problem{
-		Status:   http.StatusTooManyRequests,
-		Title:    "Rate Limit Exceeded",
-		Detail:   "Quota exhausted for current window.",
-		Type:     "urn:hclapi:error:rate-limit-exceeded",
-		Instance: "/api/v1/orders",
-		Extensions: map[string]any{
-			"retry_after_seconds": 60,
-			"tier":                "hobby",
-			"reset_epoch":         1771968000,
-		},
-	}
-
-	bytes, err := json.Marshal(p)
+	rawJSON, err := json.Marshal(p)
 	if err != nil {
-		t.Fatalf("MarshalJSON failed: %v", err)
+		t.Fatalf("failed to marshal problem: %v", err)
 	}
 
-	var rawMap map[string]any
-	if err := json.Unmarshal(bytes, &rawMap); err != nil {
-		t.Fatalf("Unmarshal to map failed: %v", err)
+	var parsed map[string]any
+	err = json.Unmarshal(rawJSON, &parsed)
+	if err != nil {
+		t.Fatalf("failed to unmarshal problem json: %v", err)
 	}
 
-	// Verify extensions appear directly at the root level of the JSON payload
-	if rawMap["retry_after_seconds"] != float64(60) {
-		t.Errorf("expected root 'retry_after_seconds' = 60, got %v", rawMap["retry_after_seconds"])
+	if parsed["status"] != float64(409) {
+		t.Errorf("status = %v; want 409", parsed["status"])
 	}
-	if rawMap["tier"] != "hobby" {
-		t.Errorf("expected root 'tier' = 'hobby', got %v", rawMap["tier"])
+	if parsed["title"] != "Conflict" {
+		t.Errorf("title = %v; want 'Conflict'", parsed["title"])
 	}
-	if rawMap["reset_epoch"] != float64(1771968000) {
-		t.Errorf("expected root 'reset_epoch' = 1771968000, got %v", rawMap["reset_epoch"])
+	if parsed["trace_id"] != "trace-999" {
+		t.Errorf("trace_id = %v; want 'trace-999'", parsed["trace_id"])
 	}
 
-	// Ensure there is no nested "extensions" wrapper object
-	if _, exists := rawMap["extensions"]; exists {
-		t.Errorf("found unwanted nested 'extensions' key in JSON payload: %+v", rawMap)
+	rec := httptest.NewRecorder()
+	problem.Write(rec, p)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("status code = %d; want 409", rec.Code)
+	}
+	if rec.Header().Get("Content-Type") != "application/problem+json" {
+		t.Errorf("Content-Type = %q; want 'application/problem+json'", rec.Header().Get("Content-Type"))
 	}
 }

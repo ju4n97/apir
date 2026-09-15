@@ -1,111 +1,134 @@
 ---
-title: Errors
-description: RFC 9457 Problem Details returned by hclapi for ingress, validation, and pipeline failures.
+title: Errors and problem details
+description: RFC 9457 Problem Details error generation, structure, and automatic status codes.
 ---
 
-hclapi returns [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details for every error, whether raised at ingress, during schema validation, or during pipeline execution.
+# Errors and problem details
+
+esquema uses [RFC 9457 Problem Details for HTTP APIs](https://www.rfc-editor.org/rfc/rfc9457) for all error responses. Error payloads use the standard `application/problem+json` media type.
+
+You won't get arbitrary error text or inconsistent JSON envelopes. Errors always return a structured object.
+
+## Standard error payload
 
 ```json
 {
-  "type": "urn:hclapi:error:bad-request",
-  "title": "Invalid Request Payload",
-  "status": 400,
-  "detail": "invalid JSON payload: syntax error at line 1, column 9",
-  "instance": "/api/v1/transform",
-  "step": "ingress"
+  "type": "urn:esquema:error:not-found",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "User not found"
 }
 ```
 
-| Field            | Type     | Description                                                |
-| :--------------- | :------- | :--------------------------------------------------------- |
-| `type`           | `string` | URI reference identifying the problem type.                |
-| `title`          | `string` | Short human-readable summary of the problem type.          |
-| `status`         | `int`    | HTTP status code.                                          |
-| `detail`         | `string` | Human-readable explanation specific to this occurrence.    |
-| `instance`       | `string` | Request URL path that generated the error.                 |
-| `step`           | `string` | Pipeline step where the failure occurred, if applicable.   |
-| `invalid_params` | `list`   | Field-level schema validation errors (RFC 9457 extension). |
+| Field            | Type     | Description                                                    |
+| :--------------- | :------- | :------------------------------------------------------------- |
+| `type`           | `string` | URI identifier for the error type (`urn:esquema:error:<slug>`) |
+| `title`          | `string` | Short human readable summary of the HTTP status code           |
+| `status`         | `int`    | Standard HTTP status code integer                              |
+| `detail`         | `string` | Explanation specific to this occurrence                        |
+| `invalid_params` | `list`   | Field validation failures, present on HTTP 422 errors          |
 
-## Returning custom errors from Go steps
+## The `problem()` function
 
-Native `go` steps can return a `hclapi.Problem` to halt the pipeline and emit a specific HTTP status code directly to the client.
-
-### `step.Problem`
-
-The fastest way to return an error is using the `step.Problem` helper. The engine automatically binds the step's name, derives the standard title (`http.StatusText`), and builds the canonical type URN:
-
-```go
-engine.RegisterStep("auth.verify_key", func(ctx context.Context, step *hclapi.Step) (any, error) {
-    apiKey := step.Request.Header("X-API-Key")
-    if apiKey == "" {
-        // Automatically emits HTTP 401 Unauthorized with canonical URN
-        return nil, step.Problem(http.StatusUnauthorized, "Missing or invalid 'X-API-Key' header")
-    }
-    return map[string]any{"authenticated": true}, nil
-})
-```
-
-### `hclapi.NewProblem`
-
-If you are outside a step or prefer a package-level function:
-
-```go
-return nil, hclapi.NewProblem(http.StatusNotFound, "Customer record not found")
-```
-
-### 3. Bare struct literal with auto-derivation
-
-You can return a `hclapi.Problem` struct literal with only `Status` and `Detail`. The engine automatically infers `Title`, `Type`, `Step`, and `Instance`:
-
-```go
-return nil, hclapi.Problem{
-    Status: http.StatusForbidden,
-    Detail: "User does not have permission to delete this project",
-}
-```
-
-## RFC 9457 Extension Members
-
-[RFC 9457 Section 3.2](https://www.rfc-editor.org/info/rfc9457/#section-3.2) allows problem details to be extended with custom members. Any key-value pairs placed in `Extensions` are automatically flattened into the root JSON object:
-
-```go
-engine.RegisterStep("billing.charge", func(ctx context.Context, step *hclapi.Step) (any, error) {
-    p := step.Problem(http.StatusPaymentRequired, "Insufficient account balance")
-    p.Extensions = map[string]any{
-        "error_code":       "CARD_DECLINED",
-        "current_balance": 14.50,
-        "required_amount": 50.00,
-        "currency":         "USD",
-    }
-    return nil, p
-})
-```
-
-#### Serialized output to the client:
-
-```json
-{
-  "type": "urn:hclapi:error:payment-required",
-  "title": "Payment Required",
-  "status": 402,
-  "detail": "Insufficient account balance",
-  "instance": "/api/v1/checkout",
-  "step": "billing.charge",
-  "error_code": "CARD_DECLINED",
-  "current_balance": 14.5,
-  "required_amount": 50,
-  "currency": "USD"
-}
-```
-
-## Overriding error documentation URLs
-
-It's possible to override the default `urn:hclapi:error:` prefix by configuring `problem.type_prefix` in the `problem {}` block:
+Use the built-in `problem(status, detail)` function inside `catch` blocks or conditional `respond` steps:
 
 ```hcl
-problem {
-  type_prefix = "https://docs.mycompany.com/errors/"
+# In SQL error catches
+catch "23505" {
+  status = 409
+  body   = problem(409, "An account with this email already exists")
+}
+
+# In conditional responses
+respond {
+  when   = steps.find_user.rows_affected == 0
+  status = 404
+  body   = problem(404, "User not found")
 }
 ```
 
-This transforms `urn:hclapi:error:payment-required` into `https://docs.mycompany.com/errors/payment-required`.
+## Automatic runtime error responses
+
+esquema generates Problem Details automatically when standard checks fail:
+
+### Malformed JSON (HTTP 400)
+
+Returned when incoming request bodies contain broken JSON syntax:
+
+```json
+{
+  "type": "urn:esquema:error:bad-request",
+  "title": "Bad Request",
+  "status": 400,
+  "detail": "Malformed JSON request body"
+}
+```
+
+### Payload too large (HTTP 413)
+
+Returned when a request body exceeds `server.max_body_size`:
+
+```json
+{
+  "type": "urn:esquema:error:request-entity-too-large",
+  "title": "Request Entity Too Large",
+  "status": 413,
+  "detail": "request body exceeds limit of 10485760 bytes"
+}
+```
+
+### Validation errors (HTTP 422)
+
+Returned when incoming data violates schema rules. All failures return together inside `invalid_params`:
+
+```json
+{
+  "type": "urn:esquema:error:unprocessable-entity",
+  "title": "Unprocessable Entity",
+  "status": 422,
+  "detail": "Request failed schema validation constraints",
+  "invalid_params": [
+    { "name": "body.email", "reason": "must be a valid email address" },
+    { "name": "path.id", "reason": "must be an integer" }
+  ]
+}
+```
+
+### Unhandled step errors (HTTP 500)
+
+Returned when an unhandled database error occurs during step processing:
+
+```json
+{
+  "type": "urn:esquema:error:internal-server-error",
+  "title": "Internal Server Error",
+  "status": 500,
+  "detail": "step \"query\": connection reset by peer"
+}
+```
+
+### Recovered panics (HTTP 500)
+
+Returned when a custom Go step callback encounters a panic, such as a nil pointer dereference:
+
+```json
+{
+  "type": "urn:esquema:error:internal-server-error",
+  "title": "Internal Server Error",
+  "status": 500,
+  "detail": "step \"compute\" panic: runtime error: invalid memory address or nil pointer dereference"
+}
+```
+
+### Upstream failures (HTTP 502)
+
+Returned when an outbound `http` step or `valkey` connection drops unexpectedly:
+
+```json
+{
+  "type": "urn:esquema:error:bad-gateway",
+  "title": "Bad Gateway",
+  "status": 502,
+  "detail": "step \"fetch_remote\" http call failed: dial tcp 10.0.0.1:443: connect: connection refused"
+}
+```

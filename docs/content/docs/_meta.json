@@ -1,23 +1,23 @@
 [
   {
     "type": "section-header",
-    "label": "Getting Started"
+    "label": "Getting started"
   },
   "index",
   "why",
   "installation",
   "quickstart",
   {
+    "type": "file",
+    "name": "patterns",
+    "label": "Patterns"
+  },
+  {
     "type": "dir",
     "name": "concepts",
     "label": "Concepts",
     "collapsible": true,
     "collapsed": false
-  },
-  {
-    "type": "file",
-    "name": "patterns",
-    "label": "Patterns"
   },
   {
     "type": "dir",

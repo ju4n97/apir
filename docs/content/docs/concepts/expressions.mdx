@@ -1,85 +1,74 @@
 ---
-title: Expressions
-description: Request-time HCL expressions for context access, conditions, interpolation, argument mapping, and response construction.
+title: Expressions and built-ins
+description: HCL context coordinates, operators, and helper functions.
 ---
 
-Request-time HCL expressions for context access, conditions, interpolation, argument mapping, and response construction.
+# Expressions and built-ins
 
-HCL attributes support expressions evaluated at request time. Expressions read from [`ctx`](./context.md) to map parameters, branch on conditions, interpolate strings, and construct response bodies.
+Dynamic values in `args`, `when`, `headers`, and `body` evaluate at request time using native HashiCorp HCL expressions.
 
 ## Operators
 
-| Operator             | Meaning            | Example                                                                     |
-| :------------------- | :----------------- | :-------------------------------------------------------------------------- |
-| `==`, `!=`           | Equality           | `steps.lookup.rows_affected == 0`                                           |
-| `>`, `>=`, `<`, `<=` | Numeric comparison | `steps.inventory.result.count < 5`                                          |
-| `&&`                 | Logical AND        | `steps.auth.result.valid == true && ctx.request.body.admin == true`         |
-| `\|\|`               | Logical OR         | `ctx.request.query.format == "csv" \|\| ctx.request.query.format == "xlsx"` |
-| `!`                  | Logical NOT        | `!steps.user.result.is_active`                                              |
+| Category       | Operator             | Example                                                |
+| :------------- | :------------------- | :----------------------------------------------------- |
+| **Equality**   | `==`, `!=`           | `steps.find_user.rows_affected == 0`                   |
+| **Relational** | `<`, `<=`, `>`, `>=` | `ctx.request.path.id > 100`                            |
+| **Logical**    | `&&`, `\|\|`, `!`    | `!steps.cache.found && ctx.request.body.active`        |
+| **Ternary**    | `? :`                | `steps.cache.found ? steps.cache.value : steps.db.row` |
+| **Arithmetic** | `+`, `-`, `*`, `/`   | `ctx.request.body.price * 1.15`                        |
 
-A field that may be absent is compared against `null`:
+## Built-in functions
+
+### `now()`
+
+Returns the current UTC timestamp formatted as an RFC 3339 string:
 
 ```hcl
 respond {
-  condition = steps.cache_lookup.result != null
-  status    = 200
-  body      = steps.cache_lookup.result
-}
-```
-
-## String interpolation
-
-`${...}` substitutes values from `ctx.request` or `steps`.
-
-```hcl
-redis "session_write" {
-  connection = connection.redis.sessions
-  command    = "SET"
-
-  key   = "session:${ctx.request.headers.x_session_id}:user"
-  value = steps.find_user.result.id
-  ttl   = "15m"
-}
-```
-
-## Argument mapping
-
-`args` maps context values to parameterized query inputs. Parameters bound through `@param` in a `sql` block are sanitized automatically.
-
-```hcl
-sql "update_account" {
-  connection = connection.postgres.main
-
-  query = <<-SQL
-    UPDATE accounts
-    SET name = @name, updated_at = NOW()
-    WHERE id = @id
-    RETURNING id, name, updated_at
-  SQL
-
-  args = {
-    id   = ctx.request.path.id
-    name = steps.sanitize_input.result.clean_name
+  status = 200
+  body = {
+    updated_at = now()
   }
 }
 ```
 
-## Response bodies
+### `uuid()`
 
-Object and list literals can be constructed inline.
+Generates a cryptographically secure RFC 4122 UUID v4 string:
+
+```hcl
+step "sql" "create_item" {
+  connection = "main"
+  query      = "INSERT INTO items (id, name) VALUES (@id, @name)"
+  args = {
+    id   = uuid()
+    name = ctx.request.body.name
+  }
+}
+```
+
+### `problem(status, detail)`
+
+Constructs an RFC 9457 Problem Details object, automatically inferring the title and error type URN:
 
 ```hcl
 respond {
-  status = 201
+  when   = steps.check.rows_affected == 0
+  status = 404
+  body   = problem(404, "Requested resource does not exist")
+}
+```
 
-  body = {
-    account = steps.create_account.result
+### `upper(str)` and `lower(str)`
 
-    metadata = {
-      requested_by = ctx.request.headers.authorization
-      created_at   = ctx.timestamp_epoch
-      tags         = ["api", "v1", ctx.request.query.environment]
-    }
+Transforms string casing:
+
+```hcl
+step "sql" "lookup" {
+  connection = "main"
+  query      = "SELECT * FROM accounts WHERE code = @code"
+  args = {
+    code = upper(ctx.request.query.code)
   }
 }
 ```

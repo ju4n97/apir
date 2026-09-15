@@ -3,97 +3,92 @@ server {
   port = 8080
 }
 
-endpoint "GET /openapi.json" {
-  openapi "spec" {
+telemetry {
+  service_name = "user-validation-service"
+  logging {
+    level  = "info"
+    redact = ["request.headers.x-api-key"]
+  }
+}
+
+schema "UserCreate" {
+  field "email" {
+    type        = "string"
+    format      = "email"
+    required    = true
+    description = "Primary user contact address"
+  }
+  field "username" {
+    type        = "string"
+    required    = true
+    min_length  = 3
+    max_length  = 20
+    description = "Unique alphanumeric handle"
+  }
+  field "account_type" {
+    type        = "string"
+    required    = true
+    enum        = ["individual", "business"]
+    description = "Account billing classification"
+  }
+  field "age" {
+    type        = "integer"
+    min         = 18
+    max         = 120
+    description = "Legal age verification"
+  }
+  field "role" {
+    type        = "string"
+    default     = "member"
+    enum        = ["admin", "member", "viewer"]
+    description = "Authorization tier"
+  }
+  field "tags" {
+    type        = "array"
+    description = "User interest classifications"
+  }
+}
+
+route "GET /docs" {
+  step "docs" {
+    renderer = "scalar"
+  }
+}
+
+route "GET /openapi.json" {
+  step "spec" {
     format = "json"
   }
 }
 
-endpoint "GET /docs" {
-  description = "Interactive API reference."
-
-  openapi "ui" {
-    renderer = "elements"
-  }
-}
-
-schema "user_create" {
-  field "email" {
-    type        = string
-    required    = true
-    format      = "email"
-    description = "User primary email address"
-  }
-
-  field "username" {
-    type       = string
-    required   = true
-    min_length = 3
-    max_length = 20
-    pattern    = "^[a-z0-9_]+$"
-  }
-
-  field "account_type" {
-    type     = string
-    required = true
-    enum     = ["individual", "business"]
-  }
-
-  field "age" {
-    type     = int
-    required = false
-    min      = 18
-    max      = 120
-  }
-
-  field "role" {
-    type    = string
-    default = "member"
-    enum    = ["admin", "member", "viewer"]
-  }
-
-  field "tags" {
-    type         = list(string)
-    required     = false
-    min_items    = 1
-    max_items    = 5
-    unique_items = true
-  }
-}
-
-endpoint "POST /api/v1/users" {
-  description = "Registers a new user with strict schema validation."
+route "POST /api/v1/users" {
+  summary = "Create user account"
+  tag     = "users"
 
   request {
-    headers {
-      field "x-api-key" {
-        type     = string
-        required = true
-        format   = "uuid"
-      }
+    header "x-api-key" {
+      type        = "string"
+      format      = "uuid"
+      required    = true
+      description = "Client authorization key"
     }
-
-    query {
-      field "source" {
-        type    = string
-        default = "direct"
-        enum    = ["direct", "referral", "ad"]
-      }
+    query "source" {
+      type        = "string"
+      default     = "direct"
+      enum        = ["direct", "referral", "ad"]
+      description = "User registration channel"
     }
-
-    body = schema.user_create
+    body = schema.UserCreate
   }
 
-  pipeline {
-    respond {
-      status = 201
-      body = {
-        message    = "User validated and created"
-        user       = ctx.request.body
-        api_key    = ctx.request.headers.x-api-key
-        src        = ctx.request.query.source
-        created_at = now()
-      }
+  step "respond" {
+    status = 201
+    body = {
+      message    = "User validated and registered"
+      user       = ctx.request.body
+      api_key    = ctx.request.headers.x-api-key
+      source     = ctx.request.query.source
+      created_at = now()
     }
   }
 }

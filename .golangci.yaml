@@ -51,6 +51,10 @@ linters:
         - fmt.Fprintln(os.Stdout)
         - fmt.Fprintln(os.Stderr)
 
+    gocritic:
+      disabled-checks: 
+        - ifElseChain
+
     revive:
       severity: warning
       rules:
@@ -130,7 +134,7 @@ formatters:
 
   settings:
     gofumpt:
-      module-path: github.com/ju4n97/hclapi
+      module-path: github.com/ju4n97/esquema
       extra:
         group-params: true
 
@@ -138,7 +142,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/ju4n97/hclapi)
+        - prefix(github.com/ju4n97/esquema)
       custom-order: true
 
     golines:

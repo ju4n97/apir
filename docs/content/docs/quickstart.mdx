@@ -1,22 +1,26 @@
 ---
 title: Quickstart
-description: Create a manifest, start hclapi, and call two working endpoints.
+description: Create an HCL manifest, start esquema, and call two working endpoints.
 ---
 
 import { Steps } from "@rspress/core/theme";
 
 # Quickstart
 
-This section creates a manifest, starts the server, and calls two endpoints.
+This guide walks through creating an HCL manifest, starting the HTTP service, and testing its endpoints.
 
 <Steps>
 
-### Create a manifest
+### 1. Create a manifest
 
-```sh
-mkdir hclapi-quickstart && cd hclapi-quickstart
-touch main.hcl
+Create a project directory and a `main.hcl` file:
+
+```bash
+mkdir esquema-quickstart && cd esquema-quickstart
+touch app.hcl
 ```
+
+Paste the following configuration:
 
 ```hcl
 server {
@@ -24,98 +28,101 @@ server {
   port = 8080
 }
 
-endpoint "GET /api/v1/health" {
-  pipeline {
-    respond {
-      status = 200
-      body = {
-        status    = "healthy"
-        timestamp = ctx.timestamp_epoch
-      }
+route "GET /health" {
+  respond {
+    status = 200
+    body = {
+      status    = "healthy"
+      timestamp = now()
     }
   }
 }
 
-endpoint "POST /api/v1/transform" {
-  pipeline {
-    starlark "sanitize" {
-      source = <<-STARLARK
-        def execute(ctx):
-          prefix = ctx.request.body.get("prefix", "item")
-          tags = ctx.request.body.get("tags", [])
-          cleaned = [prefix + ":" + t.strip().lower() for t in tags if len(t.strip()) > 0]
-          return {"count": len(cleaned), "tags": cleaned}
-      STARLARK
-    }
+route "POST /transform" {
+  step "starlark" "sanitize" {
+    source = <<-STARLARK
+      def execute(ctx):
+        body = ctx["request"]["body"]
+        prefix = body.get("prefix", "item")
+        raw_tags = body.get("tags", [])
+        cleaned = [prefix + ":" + t.strip().lower() for t in raw_tags if len(t.strip()) > 0]
+        return {"count": len(cleaned), "tags": cleaned}
+    STARLARK
+  }
 
-    respond {
-      status = 200
-      body   = steps.sanitize.result
-    }
+  respond {
+    status = 200
+    body   = steps.sanitize.result
   }
 }
 ```
 
-`GET /api/v1/health` responds unconditionally. `POST /api/v1/transform` runs a [`starlark`](./steps/starlark.mdx) step and returns its result. See [Pipelines and steps](./concepts/pipelines.mdx) for how steps pass data to each other.
+`GET /health` returns an ISO timestamp. `POST /transform` cleans up string tags inside a sandboxed Starlark script and streams the result.
 
-### Start the server
+### 2. Start the server
 
-```sh
-hclapi serve -c .
+Run the server pointing to the manifest:
+
+```bash
+esquema serve app.hcl
 ```
 
-The server binds to `127.0.0.1:8080`, as declared in the `server` block. Host and port can be overridden without editing the manifest; see [CLI reference](../cli/hclapi.mdx).
+Output:
 
-```sh
-hclapi serve -c . --port 9000 --host 0.0.0.0
+```text
+{"time":"...","level":"INFO","msg":"compiling esquema manifests","targets":["app.hcl"]}
+{"time":"...","level":"INFO","msg":"server listening","addr":"127.0.0.1:8080","endpoints":2}
 ```
 
-### Call the endpoints
+Host and port can also be overridden via CLI flags:
 
-```sh
-curl -i http://localhost:8080/api/v1/health
+```bash
+esquema serve app.hcl --port 9000 --host 0.0.0.0
+```
+
+### 3. Call the endpoints
+
+Call the health route:
+
+```bash
+curl -i http://localhost:8080/health
 ```
 
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/json
 
-{"status": "healthy", "timestamp": 1771968000}
+{"status":"healthy","timestamp":"2026-09-15T07:42:00Z"}
 ```
 
-```sh
-curl -i -X POST http://localhost:8080/api/v1/transform \
+Call the transform route with a payload:
+
+```bash
+curl -i -X POST http://localhost:8080/transform \
   -H "Content-Type: application/json" \
-  -d '{"prefix": "env", "tags": [" PROD ","web", "", " US-EAST "]}'
+  -d '{"prefix": "env", "tags": [" PROD ", "", "staging", " Dev "]}'
 ```
 
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/json
 
-{"count": 3, "tags": ["env:prod", "env:web", "env:us-east"]}
+{"count":3,"tags":["env:prod","env:staging","env:dev"]}
 ```
 
-Malformed JSON is rejected before the pipeline runs.
+If you send malformed JSON, `esquema` rejects it with an RFC 9457 `400 Bad Request` before the pipeline executes:
 
-```sh
-curl -i -X POST http://localhost:8080/api/v1/transform \
-  -d '{"tags": ["invalid" "json"]}'
+```bash
+curl -i -X POST http://localhost:8080/transform \
+  -H "Content-Type: application/json" \
+  -d '{"prefix":'
 ```
 
 ```http
 HTTP/1.1 400 Bad Request
 Content-Type: application/problem+json
 
-{
-  "type": "urn:hclapi:error:bad-request",
-  "title": "Invalid Request Payload",
-  "status": 400,
-  "detail": "invalid JSON payload: invalid character '\"' after array element",
-  "instance": "/api/v1/transform"
-}
+{"detail":"Malformed JSON request body","status":400,"title":"Bad Request","type":"urn:esquema:error:bad-request"}
 ```
-
-This is the standard error format used by hclapi. See [Errors](./concepts/errors.md).
 
 </Steps>

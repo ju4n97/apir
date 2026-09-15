@@ -2,7 +2,7 @@
   {
     "type": "file",
     "name": "structure",
-    "label": "Files and merging"
+    "label": "Files and structure"
   },
   {
     "type": "file",
@@ -10,29 +10,19 @@
     "label": "server"
   },
   {
-    "type": "custom-link",
-    "label": "openapi",
-    "link": "/openapi/overview"
-  },
-  {
-    "type": "file",
-    "name": "problem",
-    "label": "problem"
-  },
-  {
     "type": "file",
     "name": "connections",
-    "label": "connection"
-  },
-  {
-    "type": "file",
-    "name": "endpoints",
-    "label": "endpoint"
+    "label": "connections"
   },
   {
     "type": "file",
     "name": "schemas",
-    "label": "schema"
+    "label": "schemas"
+  },
+  {
+    "type": "file",
+    "name": "routes",
+    "label": "routes"
   },
   {
     "type": "file",
@@ -40,10 +30,13 @@
     "label": "Scalar types"
   },
   {
-    "type": "dir",
-    "name": "functions",
-    "label": "Functions",
-    "collapsible": true,
-    "collapsed": false
+    "type": "file",
+    "name": "openapi",
+    "label": "openapi"
+  },
+  {
+    "type": "file",
+    "name": "telemetry",
+    "label": "telemetry"
   }
 ]

@@ -1,0 +1,290 @@
+package manifest
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/getkin/kin-openapi/openapi3"
+	"gopkg.in/yaml.v3"
+
+	"github.com/ju4n97/esquema/internal/config"
+)
+
+// GenerateOpenAPI compiles a validated OpenAPI 3.1 specification document using kin-openapi.
+func GenerateOpenAPI(cfg *config.Config, format string) ([]byte, error) {
+	doc := &openapi3.T{
+		OpenAPI:    "3.1.0",
+		Paths:      openapi3.NewPaths(),
+		Components: &openapi3.Components{Schemas: make(openapi3.Schemas)},
+	}
+
+	doc.Info = &openapi3.Info{
+		Title:       cfg.OpenAPI.Title,
+		Version:     cfg.OpenAPI.Version,
+		Description: cfg.OpenAPI.Description,
+	}
+	if cfg.OpenAPI.Contact != nil {
+		doc.Info.Contact = &openapi3.Contact{
+			Name:  cfg.OpenAPI.Contact.Name,
+			Email: cfg.OpenAPI.Contact.Email,
+			URL:   cfg.OpenAPI.Contact.URL,
+		}
+	}
+	if cfg.OpenAPI.License != nil {
+		doc.Info.License = &openapi3.License{
+			Name: cfg.OpenAPI.License.Name,
+			URL:  cfg.OpenAPI.License.URL,
+		}
+	}
+
+	for _, srv := range cfg.OpenAPI.Servers {
+		doc.Servers = append(doc.Servers, &openapi3.Server{
+			URL:         srv.URL,
+			Description: srv.Description,
+		})
+	}
+	if len(doc.Servers) == 0 {
+		doc.Servers = append(doc.Servers, &openapi3.Server{
+			URL:         "/",
+			Description: "Current server origin",
+		})
+	}
+
+	for _, t := range cfg.OpenAPI.Tags {
+		doc.Tags = append(doc.Tags, &openapi3.Tag{
+			Name:        t.Name,
+			Description: t.Description,
+		})
+	}
+
+	doc.Components.Schemas["ProblemDetails"] = &openapi3.SchemaRef{
+		Value: buildProblemDetailsSchema(),
+	}
+
+	for name, s := range cfg.Schemas {
+		schemaObj := openapi3.NewObjectSchema()
+		for fName, field := range s.Fields {
+			schemaObj.Properties[fName] = fieldToSchemaRef(field)
+			if field.Required {
+				schemaObj.Required = append(schemaObj.Required, fName)
+			}
+		}
+		doc.Components.Schemas[name] = &openapi3.SchemaRef{Value: schemaObj}
+	}
+
+	for _, ep := range cfg.Endpoints {
+		if shouldOmitFromSpec(ep) {
+			continue
+		}
+
+		op := openapi3.NewOperation()
+		op.Summary = ep.Summary
+		if op.Summary == "" {
+			op.Summary = fmt.Sprintf("%s %s", ep.Method, ep.Path)
+		}
+		if ep.Tag != "" {
+			op.Tags = []string{ep.Tag}
+		}
+
+		for name, field := range ep.Request.Path {
+			param := openapi3.NewPathParameter(name).WithSchema(fieldToSchema(field))
+			param.Required = true
+			op.AddParameter(param)
+		}
+		for name, field := range ep.Request.Query {
+			param := openapi3.NewQueryParameter(name).WithSchema(fieldToSchema(field))
+			param.Required = field.Required
+			op.AddParameter(param)
+		}
+		for name, field := range ep.Request.Headers {
+			param := openapi3.NewHeaderParameter(name).WithSchema(fieldToSchema(field))
+			param.Required = field.Required
+			op.AddParameter(param)
+		}
+
+		if ep.Request.BodyRef != "" {
+			op.RequestBody = &openapi3.RequestBodyRef{
+				Value: openapi3.NewRequestBody().
+					WithJSONSchemaRef(&openapi3.SchemaRef{Ref: "#/components/schemas/" + ep.Request.BodyRef}).
+					WithRequired(true),
+			}
+		} else if len(ep.Request.Body) > 0 {
+			bodyObj := openapi3.NewObjectSchema()
+			for fName, field := range ep.Request.Body {
+				bodyObj.Properties[fName] = fieldToSchemaRef(field)
+				if field.Required {
+					bodyObj.Required = append(bodyObj.Required, fName)
+				}
+			}
+			op.RequestBody = &openapi3.RequestBodyRef{
+				Value: openapi3.NewRequestBody().
+					WithJSONSchemaRef(&openapi3.SchemaRef{Value: bodyObj}).
+					WithRequired(true),
+			}
+		}
+
+		hasSuccess := false
+		for _, s := range ep.Pipeline {
+			if s.Type == config.StepTypeRespond && s.Respond != nil {
+				status := s.Respond.Status
+				if status == 0 {
+					status = http.StatusOK
+				}
+				resp := openapi3.NewResponse().WithDescription(http.StatusText(status))
+
+				if s.Respond.SchemaRef != "" {
+					ref := resolveSchemaRef(s.Respond.SchemaRef)
+					resp.WithJSONSchemaRef(ref)
+				}
+				op.AddResponse(status, resp)
+				if status < 400 {
+					hasSuccess = true
+				}
+			}
+
+			if s.Type == config.StepTypeSQL && s.SQL != nil {
+				for _, c := range s.SQL.Catches {
+					status := c.Status
+					if status == 0 {
+						status = http.StatusBadRequest
+					}
+					resp := openapi3.NewResponse().WithDescription(http.StatusText(status))
+					resp.Content = openapi3.NewContentWithJSONSchemaRef(&openapi3.SchemaRef{
+						Ref: "#/components/schemas/ProblemDetails",
+					})
+					op.AddResponse(status, resp)
+				}
+			}
+		}
+
+		if !hasSuccess {
+			op.AddResponse(http.StatusOK, openapi3.NewResponse().WithDescription("OK"))
+		}
+
+		if ep.Request.HasRules() {
+			op.AddResponse(http.StatusUnprocessableEntity, openapi3.NewResponse().
+				WithDescription("Unprocessable Entity").
+				WithContent(openapi3.NewContentWithJSONSchemaRef(&openapi3.SchemaRef{Ref: "#/components/schemas/ProblemDetails"})))
+		}
+
+		pathItem := doc.Paths.Find(ep.Path)
+		if pathItem == nil {
+			pathItem = &openapi3.PathItem{}
+			doc.Paths.Set(ep.Path, pathItem)
+		}
+		pathItem.SetOperation(ep.Method, op)
+	}
+
+	loader := openapi3.NewLoader()
+	if err := loader.ResolveRefsIn(doc, nil); err != nil {
+		return nil, fmt.Errorf("resolve openapi refs: %w", err)
+	}
+
+	if err := doc.Validate(context.Background()); err != nil {
+		return nil, fmt.Errorf("openapi spec validation failed: %w", err)
+	}
+
+	if strings.EqualFold(format, string(config.SpecFormatYAML)) {
+		jsonBytes, err := json.Marshal(doc)
+		if err != nil {
+			return nil, err
+		}
+		var parsed any
+		_ = json.Unmarshal(jsonBytes, &parsed)
+		return yaml.Marshal(parsed)
+	}
+
+	return json.MarshalIndent(doc, "", "  ")
+}
+
+// shouldOmitFromSpec determines whether an endpoint represents documentation or spec tooling.
+func shouldOmitFromSpec(ep config.CompiledEndpoint) bool {
+	if ep.Hidden {
+		return true
+	}
+	for _, s := range ep.Pipeline {
+		if s.Type == config.StepTypeDocs || s.Type == config.StepTypeSpec {
+			return true
+		}
+	}
+	return false
+}
+
+// fieldToSchema converts a Field strictly adhering to OpenAPI 3.1 types and formats.
+func fieldToSchema(f config.Field) *openapi3.Schema {
+	s := openapi3.NewSchema()
+	s.Type = &openapi3.Types{string(f.Type)}
+
+	if f.Format != "" {
+		s.Format = string(f.Format)
+	}
+	if f.Min != nil {
+		s.Min = f.Min
+	}
+	if f.Max != nil {
+		s.Max = f.Max
+	}
+	if f.MinLength != nil {
+		v := uint64(*f.MinLength)
+		s.MinLength = v
+	}
+	if f.MaxLength != nil {
+		v := uint64(*f.MaxLength)
+		s.MaxLength = &v
+	}
+	if len(f.Enum) > 0 {
+		for _, e := range f.Enum {
+			s.Enum = append(s.Enum, e)
+		}
+	}
+	if f.Default != nil {
+		s.Default = f.Default
+	}
+	if f.Description != "" {
+		s.Description = f.Description
+	}
+
+	return s
+}
+
+// fieldToSchemaRef wraps a Field schema inside an OpenAPI SchemaRef.
+func fieldToSchemaRef(f config.Field) *openapi3.SchemaRef {
+	return &openapi3.SchemaRef{Value: fieldToSchema(f)}
+}
+
+// resolveSchemaRef constructs schema component references supporting array notations.
+func resolveSchemaRef(ref string) *openapi3.SchemaRef {
+	if after, ok := strings.CutPrefix(ref, "[]"); ok {
+		clean := after
+		arraySchema := openapi3.NewArraySchema()
+		arraySchema.Items = &openapi3.SchemaRef{
+			Ref: "#/components/schemas/" + clean,
+		}
+		return &openapi3.SchemaRef{
+			Value: arraySchema,
+		}
+	}
+	return &openapi3.SchemaRef{Ref: "#/components/schemas/" + ref}
+}
+
+// buildProblemDetailsSchema defines the standard RFC 9457 error model for documentation.
+func buildProblemDetailsSchema() *openapi3.Schema {
+	invalidParamItem := openapi3.NewObjectSchema()
+	invalidParamItem.WithProperty("name", openapi3.NewStringSchema())
+	invalidParamItem.WithProperty("reason", openapi3.NewStringSchema())
+
+	invalidParamsArray := openapi3.NewArraySchema()
+	invalidParamsArray.Items = &openapi3.SchemaRef{Value: invalidParamItem}
+
+	s := openapi3.NewObjectSchema()
+	s.WithProperty("type", openapi3.NewStringSchema().WithFormat("uri"))
+	s.WithProperty("title", openapi3.NewStringSchema())
+	s.WithProperty("status", openapi3.NewIntegerSchema())
+	s.WithProperty("detail", openapi3.NewStringSchema())
+	s.WithProperty("instance", openapi3.NewStringSchema())
+	s.WithProperty("invalid_params", invalidParamsArray)
+	return s
+}

@@ -1,8 +1,0 @@
-[
-  "json_encode",
-  "json_decode",
-  "base64_encode",
-  "base64_decode",
-  "url_encode",
-  "url_decode"
-]
