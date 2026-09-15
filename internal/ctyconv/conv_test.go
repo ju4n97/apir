@@ -92,3 +92,54 @@ func TestEvalExpressions(t *testing.T) {
 		}
 	})
 }
+
+// TestToCty_CustomStructSlices verifies that slices of custom structs convert to cty tuples with json tags.
+func TestToCty_CustomStructSlices(t *testing.T) {
+	t.Parallel()
+
+	type ResolvedItem struct {
+		URL      string `json:"url"`
+		FreshURL string `json:"fresh_url,omitempty"`
+		Error    string `json:"error,omitempty"`
+	}
+
+	input := map[string]any{
+		"total": 1,
+		"resolved": []ResolvedItem{
+			{
+				URL:   "http://localhost:8080/assets?id=42",
+				Error: "study not found in cfaz",
+			},
+		},
+	}
+
+	ctyVal := ctyconv.ToCty(input)
+	native := ctyconv.ToNative(ctyVal)
+
+	nativeMap, ok := native.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got: %T", native)
+	}
+
+	// Verify resolved is a real slice of maps, not a stringified struct
+	resolvedSlice, ok := nativeMap["resolved"].([]any)
+	if !ok {
+		t.Fatalf("expected nativeMap['resolved'] to be []any, got: %T (%v)", nativeMap["resolved"], nativeMap["resolved"])
+	}
+
+	if len(resolvedSlice) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(resolvedSlice))
+	}
+
+	itemMap, ok := resolvedSlice[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected item to be map[string]any, got: %T", resolvedSlice[0])
+	}
+
+	if itemMap["url"] != "http://localhost:8080/assets?id=42" {
+		t.Errorf("url = %v; want 'http://localhost:8080/assets?id=42'", itemMap["url"])
+	}
+	if itemMap["error"] != "study not found in cfaz" {
+		t.Errorf("error = %v; want 'study not found in cfaz'", itemMap["error"])
+	}
+}

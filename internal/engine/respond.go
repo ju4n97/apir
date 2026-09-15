@@ -59,7 +59,8 @@ func (e *Engine) executeRespond(ctx *Context, w http.ResponseWriter, step *confi
 	}
 }
 
-// maskResponse filters out fields not declared in the target response schema.
+// maskResponse filters out fields not declared in the target response schema,
+// recursively handling nested schemas and array items.
 func (e *Engine) maskResponse(data any, schemaRef string) any {
 	cleanRef := strings.TrimPrefix(schemaRef, "[]")
 	targetSchema, exists := e.cfg.Schemas[cleanRef]
@@ -67,35 +68,69 @@ func (e *Engine) maskResponse(data any, schemaRef string) any {
 		return data
 	}
 
-	maskMap := func(m map[string]any) map[string]any {
-		out := make(map[string]any, len(targetSchema.Fields))
-		for fName := range targetSchema.Fields {
+	var maskValue func(val any, field config.Field) any
+
+	maskMap := func(m map[string]any, schema config.Schema) map[string]any {
+		out := make(map[string]any, len(schema.Fields))
+		for fName, field := range schema.Fields {
 			if val, ok := m[fName]; ok {
-				out[fName] = val
+				out[fName] = maskValue(val, field)
 			}
 		}
 		return out
+	}
+
+	maskValue = func(val any, field config.Field) any {
+		if field.SchemaRef == "" {
+			return val
+		}
+		nestedSchema, ok := e.cfg.Schemas[field.SchemaRef]
+		if !ok {
+			return val
+		}
+		switch v := val.(type) {
+		case []map[string]any:
+			out := make([]any, len(v))
+			for i, item := range v {
+				out[i] = maskMap(item, nestedSchema)
+			}
+			return out
+		case []any:
+			out := make([]any, len(v))
+			for i, item := range v {
+				if m, isMap := item.(map[string]any); isMap {
+					out[i] = maskMap(m, nestedSchema)
+				} else {
+					out[i] = item
+				}
+			}
+			return out
+		case map[string]any:
+			return maskMap(v, nestedSchema)
+		default:
+			return val
+		}
 	}
 
 	switch v := data.(type) {
 	case []map[string]any:
 		outList := make([]any, len(v))
 		for i, m := range v {
-			outList[i] = maskMap(m)
+			outList[i] = maskMap(m, targetSchema)
 		}
 		return outList
 	case []any:
 		outList := make([]any, len(v))
 		for i, item := range v {
 			if m, ok := item.(map[string]any); ok {
-				outList[i] = maskMap(m)
+				outList[i] = maskMap(m, targetSchema)
 			} else {
 				outList[i] = item
 			}
 		}
 		return outList
 	case map[string]any:
-		return maskMap(v)
+		return maskMap(v, targetSchema)
 	default:
 		return data
 	}

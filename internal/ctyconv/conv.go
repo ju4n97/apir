@@ -3,8 +3,10 @@ package ctyconv
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 	"uuid"
@@ -14,12 +16,13 @@ import (
 	"github.com/zclconf/go-cty/cty/function"
 )
 
-// ToCty converts any Go primitive, slice, or map into a cty.Value.
+// ToCty converts any Go primitive, slice, map, or struct into a cty.Value.
 func ToCty(val any) cty.Value {
 	if val == nil {
 		return cty.NilVal
 	}
 
+	// Fast path for flat primitive scalars
 	switch v := val.(type) {
 	case string:
 		return cty.StringVal(v)
@@ -27,8 +30,29 @@ func ToCty(val any) cty.Value {
 		return cty.BoolVal(v)
 	case int:
 		return cty.NumberIntVal(int64(v))
+	case int8:
+		return cty.NumberIntVal(int64(v))
+	case int16:
+		return cty.NumberIntVal(int64(v))
+	case int32:
+		return cty.NumberIntVal(int64(v))
 	case int64:
 		return cty.NumberIntVal(v)
+	case uint:
+		return cty.NumberIntVal(int64(v))
+	case uint8:
+		return cty.NumberIntVal(int64(v))
+	case uint16:
+		return cty.NumberIntVal(int64(v))
+	case uint32:
+		return cty.NumberIntVal(int64(v))
+	case uint64:
+		if v > math.MaxInt64 {
+			return cty.NumberFloatVal(float64(v))
+		}
+		return cty.NumberIntVal(int64(v))
+	case float32:
+		return cty.NumberFloatVal(float64(v))
 	case float64:
 		return cty.NumberFloatVal(v)
 	case map[string]any:
@@ -49,27 +73,104 @@ func ToCty(val any) cty.Value {
 			attrs[k] = cty.StringVal(item)
 		}
 		return cty.ObjectVal(attrs)
-	case []any:
-		if len(v) == 0 {
-			return cty.EmptyTupleVal
-		}
-		elems := make([]cty.Value, len(v))
-		for i, item := range v {
-			elems[i] = ToCty(item)
-		}
-		return cty.TupleVal(elems)
-	case []map[string]any:
-		if len(v) == 0 {
-			return cty.EmptyTupleVal
-		}
-		elems := make([]cty.Value, len(v))
-		for i, item := range v {
-			elems[i] = ToCty(item)
-		}
-		return cty.TupleVal(elems)
-	default:
-		return cty.StringVal(fmt.Sprintf("%v", v))
 	}
+
+	// Deep reflection path for structs, custom slices, arrays, and maps
+	return reflectToCty(reflect.ValueOf(val))
+}
+
+// reflectToCty inspects arbitrary reflection values, handling custom slices and structs.
+func reflectToCty(rv reflect.Value) cty.Value {
+	if !rv.IsValid() {
+		return cty.NilVal
+	}
+
+	// Dereference pointers and interfaces
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
+		if rv.IsNil() {
+			return cty.NilVal
+		}
+		rv = rv.Elem()
+	}
+
+	switch rv.Kind() {
+	case reflect.String:
+		return cty.StringVal(rv.String())
+	case reflect.Bool:
+		return cty.BoolVal(rv.Bool())
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return cty.NumberIntVal(rv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		u := rv.Uint()
+		if u > math.MaxInt64 {
+			return cty.NumberFloatVal(float64(u))
+		}
+		return cty.NumberIntVal(int64(u))
+	case reflect.Float32, reflect.Float64:
+		return cty.NumberFloatVal(rv.Float())
+
+	case reflect.Slice, reflect.Array:
+		length := rv.Len()
+		if length == 0 {
+			return cty.EmptyTupleVal
+		}
+		elems := make([]cty.Value, length)
+		for i := 0; i < length; i++ {
+			elems[i] = ToCty(rv.Index(i).Interface())
+		}
+		return cty.TupleVal(elems)
+
+	case reflect.Map:
+		if rv.Len() == 0 {
+			return cty.EmptyObjectVal
+		}
+		attrs := make(map[string]cty.Value, rv.Len())
+		for _, key := range rv.MapKeys() {
+			keyStr := fmt.Sprintf("%v", key.Interface())
+			attrs[keyStr] = ToCty(rv.MapIndex(key).Interface())
+		}
+		return cty.ObjectVal(attrs)
+
+	case reflect.Struct:
+		return structToCty(rv)
+
+	default:
+		return cty.StringVal(fmt.Sprintf("%v", rv.Interface()))
+	}
+}
+
+// structToCty converts struct fields to an ObjectVal respecting json tags.
+func structToCty(rv reflect.Value) cty.Value {
+	rt := rv.Type()
+	numFields := rt.NumField()
+	attrs := make(map[string]cty.Value, numFields)
+
+	for i := 0; i < numFields; i++ {
+		field := rt.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+
+		key := field.Name
+		tag := field.Tag.Get("json")
+		if tag == "-" {
+			continue
+		}
+		if tag != "" {
+			parts := strings.Split(tag, ",")
+			if parts[0] != "" {
+				key = parts[0]
+			}
+		}
+
+		fieldVal := rv.Field(i)
+		attrs[key] = ToCty(fieldVal.Interface())
+	}
+
+	if len(attrs) == 0 {
+		return cty.EmptyObjectVal
+	}
+	return cty.ObjectVal(attrs)
 }
 
 // ToNative converts a cty.Value back into standard Go primitives, slices, or maps.
@@ -158,11 +259,9 @@ func BuiltinFunctions() map[string]function.Function {
 				if val != "" {
 					return cty.StringVal(val), nil
 				}
-
 				if len(args) > 1 && !args[1].IsNull() {
 					return cty.StringVal(args[1].AsString()), nil
 				}
-
 				return cty.StringVal(""), nil
 			},
 		}),
