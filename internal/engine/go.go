@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime/debug"
@@ -51,7 +52,13 @@ func (e *Engine) executeGo(ctx *Context, w http.ResponseWriter, name string, ste
 		Request: ctx.req,
 	})
 	if callErr != nil {
-		p := problem.New(http.StatusInternalServerError, callErr.Error())
+		var p problem.Problem
+		if errors.As(callErr, &p) {
+			problem.Write(w, p)
+			return callErr
+		}
+
+		p = problem.New(http.StatusInternalServerError, callErr.Error())
 		problem.Write(w, p)
 		return callErr
 	}
