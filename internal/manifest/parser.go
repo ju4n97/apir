@@ -285,6 +285,10 @@ func decodeRoute(
 	}
 
 	attrs, _ := body.JustAttributes()
+	if attr, ok := attrs["operation_id"]; ok {
+		val, _ := attr.Expr.Value(ctx)
+		ep.OperationID = val.AsString()
+	}
 	if attr, ok := attrs["summary"]; ok {
 		val, _ := attr.Expr.Value(ctx)
 		ep.Summary = val.AsString()
@@ -840,6 +844,7 @@ var routeBodySchema = &hcl.BodySchema{
 		{Name: "summary"},
 		{Name: "tag"},
 		{Name: "hidden"},
+		{Name: "operation_id"},
 	},
 	Blocks: []hcl.BlockHeaderSchema{
 		{Type: "request"},

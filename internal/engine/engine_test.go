@@ -70,11 +70,11 @@ route "POST /users" {
   }
 
   step "starlark" "normalize" {
-    source = <<-STARLARK
+    source = <<-PYTHON
       def execute(ctx):
-		email = ctx["request"]["body"].get("email", "")
-		return {"clean_email": email.strip().lower()}
-    STARLARK
+          email = ctx["request"]["body"].get("email", "")
+          return {"clean_email": email.strip().lower()}
+    PYTHON
   }
 
   step "sql" "insert" {

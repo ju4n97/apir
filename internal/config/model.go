@@ -133,6 +133,7 @@ type CompiledEndpoint struct {
 	Method       string
 	Path         string
 	RoutePattern string
+	OperationID  string
 	Summary      string
 	Tag          string
 	Hidden       bool

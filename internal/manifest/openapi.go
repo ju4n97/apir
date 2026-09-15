@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/ju4n97/esquema/internal/config"
+	"github.com/ju4n97/esquema/internal/problem"
 )
 
 // GenerateOpenAPI compiles a validated OpenAPI 3.1 specification document using kin-openapi.
@@ -89,6 +90,13 @@ func GenerateOpenAPI(cfg *config.Config, format string) ([]byte, error) {
 			op.Tags = []string{ep.Tag}
 		}
 
+		if ep.OperationID != "" {
+			op.OperationID = ep.OperationID
+		} else {
+			op.OperationID = deriveOperationID(ep.Method, ep.Path)
+		}
+
+		// Parameters: Path, Query, Header
 		for name, field := range ep.Request.Path {
 			param := openapi3.NewPathParameter(name).WithSchema(fieldToSchema(field))
 			param.Required = true
@@ -105,6 +113,7 @@ func GenerateOpenAPI(cfg *config.Config, format string) ([]byte, error) {
 			op.AddParameter(param)
 		}
 
+		// Request Body
 		if ep.Request.BodyRef != "" {
 			op.RequestBody = &openapi3.RequestBodyRef{
 				Value: openapi3.NewRequestBody().
@@ -138,7 +147,13 @@ func GenerateOpenAPI(cfg *config.Config, format string) ([]byte, error) {
 				if s.Respond.SchemaRef != "" {
 					ref := resolveSchemaRef(s.Respond.SchemaRef)
 					resp.WithJSONSchemaRef(ref)
+				} else if s.Respond.BodyExpr != nil && status != http.StatusNoContent {
+					// Prevent client SDKs from generating "void" return types for JSON bodies
+					resp.Content = openapi3.NewContentWithJSONSchemaRef(&openapi3.SchemaRef{
+						Value: openapi3.NewObjectSchema(),
+					})
 				}
+
 				op.AddResponse(status, resp)
 				if status < 400 {
 					hasSuccess = true
@@ -151,24 +166,33 @@ func GenerateOpenAPI(cfg *config.Config, format string) ([]byte, error) {
 					if status == 0 {
 						status = http.StatusBadRequest
 					}
-					resp := openapi3.NewResponse().WithDescription(http.StatusText(status))
-					resp.Content = openapi3.NewContentWithJSONSchemaRef(&openapi3.SchemaRef{
-						Ref: "#/components/schemas/ProblemDetails",
-					})
+					resp := openapi3.NewResponse().
+						WithDescription(http.StatusText(status)).
+						WithContent(problemDetailsContent())
 					op.AddResponse(status, resp)
 				}
 			}
 		}
 
 		if !hasSuccess {
-			op.AddResponse(http.StatusOK, openapi3.NewResponse().WithDescription("OK"))
+			op.AddResponse(http.StatusOK, openapi3.NewResponse().
+				WithDescription("OK").
+				WithContent(openapi3.NewContentWithJSONSchemaRef(&openapi3.SchemaRef{
+					Value: openapi3.NewObjectSchema(),
+				})))
 		}
 
+		// Document RFC 9457 application/problem+json media type for errors
 		if ep.Request.HasRules() {
 			op.AddResponse(http.StatusUnprocessableEntity, openapi3.NewResponse().
 				WithDescription("Unprocessable Entity").
-				WithContent(openapi3.NewContentWithJSONSchemaRef(&openapi3.SchemaRef{Ref: "#/components/schemas/ProblemDetails"})))
+				WithContent(problemDetailsContent()))
 		}
+
+		// Default 500 Internal Server Error
+		op.AddResponse(http.StatusInternalServerError, openapi3.NewResponse().
+			WithDescription("Internal Server Error").
+			WithContent(problemDetailsContent()))
 
 		pathItem := doc.Paths.Find(ep.Path)
 		if pathItem == nil {
@@ -200,6 +224,40 @@ func GenerateOpenAPI(cfg *config.Config, format string) ([]byte, error) {
 	return json.MarshalIndent(doc, "", "  ")
 }
 
+// deriveOperationID creates a camelCase identifier like "postUsers" or "getTodosById".
+func deriveOperationID(method, path string) string {
+	parts := strings.FieldsFunc(path, func(r rune) bool {
+		return r == '/' || r == '-' || r == '_' || r == '{' || r == '}'
+	})
+
+	var b strings.Builder
+	b.WriteString(strings.ToLower(method))
+	for _, p := range parts {
+		if p == "" || strings.EqualFold(p, "api") || strings.HasPrefix(strings.ToLower(p), "v") {
+			continue
+		}
+		b.WriteString(strings.ToUpper(p[:1]))
+		b.WriteString(strings.ToLower(p[1:]))
+	}
+
+	res := b.String()
+	if res == strings.ToLower(method) {
+		return strings.ToLower(method) + "Root"
+	}
+	return res
+}
+
+// problemDetailsContent returns the RFC 9457 application/problem+json media type representation.
+func problemDetailsContent() openapi3.Content {
+	return openapi3.Content{
+		problem.ContentType: &openapi3.MediaType{
+			Schema: &openapi3.SchemaRef{
+				Ref: "#/components/schemas/ProblemDetails",
+			},
+		},
+	}
+}
+
 // shouldOmitFromSpec determines whether an endpoint represents documentation or spec tooling.
 func shouldOmitFromSpec(ep config.CompiledEndpoint) bool {
 	if ep.Hidden {
@@ -217,6 +275,13 @@ func shouldOmitFromSpec(ep config.CompiledEndpoint) bool {
 func fieldToSchema(f config.Field) *openapi3.Schema {
 	s := openapi3.NewSchema()
 	s.Type = &openapi3.Types{string(f.Type)}
+
+	// OpenAPI 3.1 requirement: Array types must define items
+	if f.Type == config.DataTypeArray {
+		s.Items = &openapi3.SchemaRef{
+			Value: openapi3.NewSchema(),
+		}
+	}
 
 	if f.Format != "" {
 		s.Format = string(f.Format)
