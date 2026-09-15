@@ -36,15 +36,30 @@ func (p Problem) Error() string {
 	return p.Title
 }
 
-// MarshalJSON flattens extension fields and invalid_params into the root JSON object.
+// MarshalJSON flattens extension fields and invalid_params into the root JSON object,
+// automatically providing standard RFC 9457 title and type values if omitted.
 func (p Problem) MarshalJSON() ([]byte, error) {
 	m := make(map[string]any, 7+len(p.Extensions))
 	maps.Copy(m, p.Extensions)
 
-	if p.Type != "" {
-		m["type"] = p.Type
+	title := p.Title
+	if title == "" && p.Status != 0 {
+		title = http.StatusText(p.Status)
+		if title == "" {
+			title = "Error"
+		}
 	}
-	m["title"] = p.Title
+	m["title"] = title
+
+	problemType := p.Type
+	if problemType == "" && p.Status != 0 {
+		slug := strings.ToLower(strings.ReplaceAll(title, " ", "-"))
+		problemType = "urn:esquema:error:" + slug
+	}
+	if problemType != "" {
+		m["type"] = problemType
+	}
+
 	m["status"] = p.Status
 	if p.Detail != "" {
 		m["detail"] = p.Detail

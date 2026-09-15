@@ -14,7 +14,7 @@ step "http" "fetch_pricing" {
   timeout = "3s"
   headers = {
     "X-Tenant-ID"    = ctx.request.headers.x-tenant-id
-    "X-Service-Auth" = env.SERVICE_SECRET
+    "X-Service-Auth" = env("SERVICE_SECRET")
   }
   body = {
     quantity = ctx.request.body.quantity

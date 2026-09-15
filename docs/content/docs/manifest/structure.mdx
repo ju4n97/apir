@@ -31,16 +31,16 @@ drafts/*
 
 ## Environment variables
 
-You can read environment variables during compile time using the `env` object:
+You can read environment variables during compile time using the `env` function:
 
 ```hcl
 server {
-  port = env.PORT
+  port = env("PORT", 8080)
 }
 
 connection "sql" "main" {
   engine = "postgres"
-  source = env.DATABASE_URL
+  source = env("DATABASE_URL", "postgres://localhost/main")
 }
 ```
 

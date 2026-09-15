@@ -4,6 +4,7 @@ package ctyconv
 import (
 	"fmt"
 	"math/big"
+	"os"
 	"strings"
 	"time"
 	"uuid"
@@ -139,6 +140,32 @@ func EvalAny(expr hcl.Expression, ctx *hcl.EvalContext) (any, error) {
 // BuiltinFunctions returns standard helper functions available in HCL expressions.
 func BuiltinFunctions() map[string]function.Function {
 	return map[string]function.Function{
+		"env": function.New(&function.Spec{
+			Params: []function.Parameter{
+				{
+					Name: "name",
+					Type: cty.String,
+				},
+			},
+			VarParam: &function.Parameter{
+				Name: "default",
+				Type: cty.String,
+			},
+			Type: function.StaticReturnType(cty.String),
+			Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+				key := args[0].AsString()
+				val := os.Getenv(key)
+				if val != "" {
+					return cty.StringVal(val), nil
+				}
+
+				if len(args) > 1 && !args[1].IsNull() {
+					return cty.StringVal(args[1].AsString()), nil
+				}
+
+				return cty.StringVal(""), nil
+			},
+		}),
 		"now": function.New(&function.Spec{
 			Params: []function.Parameter{},
 			Type:   function.StaticReturnType(cty.String),
